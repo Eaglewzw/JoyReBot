@@ -4,6 +4,13 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
   name="rebot_b601_rs">
+  <!-- Virtual world link to anchor the robot base to the ground,
+       preventing the base from bouncing due to joint reaction forces. -->
+  <link name="world" />
+  <joint name="base_fixed" type="fixed">
+    <parent link="world" />
+    <child link="base_link" />
+  </joint>
   <link
     name="base_link">
     <inertial>
