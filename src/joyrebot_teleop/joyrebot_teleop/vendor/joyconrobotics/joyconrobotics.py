@@ -164,7 +164,8 @@ class JoyconRobotics:
                  change_down_to_gripper: bool = False, # ZR to toggle gripper state is common for lerobot, ARX ARM and VixperX. But for UR, Sawyer and panda you could try this. ZR to go down and stick button to toggle gripper
                  lowpassfilter_alpha_rate = 0.05,
                  pure_dx = True,
-                 all_button_return = False
+                 all_button_return = False,
+                 enable_shoulder_translation = True
                  ):
         
         if device == "right":
@@ -236,6 +237,7 @@ class JoyconRobotics:
         self.joycon_button_sr = 0
         self.joycon_button_zrl = 0
         self.all_button_return = all_button_return
+        self.enable_shoulder_translation = enable_shoulder_translation
         
         self.button_control = 0
         
@@ -306,7 +308,7 @@ class JoyconRobotics:
         
         # Up and down movement
         joycon_button_up = self.joycon.get_button_r() if self.joycon.is_right() else self.joycon.get_button_l()
-        if joycon_button_up == 1:
+        if joycon_button_up == 1 and self.enable_shoulder_translation:
             if self.pure_z:
                 self.position[2] += 0.001 * self.dof_speed[2]
             else:

@@ -75,8 +75,10 @@ class TeleopController(Node):
         requested = bool(message.data)
         if requested and not self.clutch and self.input_pose is not None and self.q is not None:
             self.mapper.engage(self.input_pose, self.chain.forward(self.q))
+            self.get_logger().info("Teleoperation engaged")
         elif not requested and self.clutch:
             self.mapper.clear()
+            self.get_logger().info("Teleoperation disengaged; holding joint positions")
         self.clutch = requested
 
     def on_gripper(self, message):
@@ -98,6 +100,10 @@ class TeleopController(Node):
             if success and np.all(np.isfinite(solution)):
                 max_step = float(self.get_parameter("max_joint_speed").value) * self.dt
                 self.command += np.clip(solution - self.command, -max_step, max_step)
+            else:
+                self.get_logger().warn(
+                    "IK did not converge; holding the last valid joint command",
+                    throttle_duration_sec=2.0)
         for name, value in zip(self.JOINT_NAMES, self.command):
             self.joint_pubs[name].publish(Float64(data=float(value)))
         closed = float(self.get_parameter("gripper_closed").value)

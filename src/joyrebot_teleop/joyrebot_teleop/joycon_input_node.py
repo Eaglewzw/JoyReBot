@@ -19,9 +19,9 @@ class JoyconInput(Node):
     def __init__(self):
         super().__init__("joycon_input")
         self.declare_parameter("publish_rate", 50.0)
-        self.declare_parameter("clutch_button", "sr")
+        self.declare_parameter("clutch_button", "zr")
         self.declare_parameter("terminal_display", True)
-        self.declare_parameter("display_rate", 2.0)
+        self.declare_parameter("display_rate", 30.0)
         self.declare_parameter("rescan_rate", 2.0)
         self.pose_pub = self.create_publisher(PoseStamped, "~/pose", 10)
         self.clutch_pub = self.create_publisher(Bool, "~/clutch", 10)
@@ -34,6 +34,8 @@ class JoyconInput(Node):
         # Teleoperation priority is fixed: right Joy-Con first, left as fallback.
         self.monitors = {}
         self.controller = None
+        self.gripper_state = 1.0
+        self.previous_gripper_button = False
         for side in ("left", "right"):
             self.connect_side(side, announce_failure=True)
         if "right" in self.monitors:
@@ -64,6 +66,7 @@ class JoyconInput(Node):
                 all_button_return=True,
                 gripper_open=1.0,
                 gripper_close=0.0,
+                enable_shoulder_translation=False,
             )
             self.monitors[side] = controller
             self.get_logger().info(f"{side.capitalize()} Joy-Con connected")
@@ -86,7 +89,7 @@ class JoyconInput(Node):
     def publish_input(self):
         if self.controller is None:
             return
-        posture, gripper, _ = self.controller.get_control()
+        posture, _, _ = self.controller.get_control()
         pose = PoseStamped()
         pose.header.stamp = self.get_clock().now().to_msg()
         pose.header.frame_id = "joycon"
@@ -94,17 +97,18 @@ class JoyconInput(Node):
         quaternion = Rotation.from_euler("xyz", posture[3:]).as_quat()
         (pose.pose.orientation.x, pose.pose.orientation.y,
          pose.pose.orientation.z, pose.pose.orientation.w) = quaternion
-        clutch_name = str(self.get_parameter("clutch_button").value)
-        # listen_button consumes edge events; the tracked states are stable and suitable for a clutch.
-        state_by_name = {
-            # joycon-robotics 2025 names these two tracked fields in reverse.
-            "sl": self.controller.joycon_button_sr,
-            "sr": self.controller.joycon_button_sl,
-            "zr": self.controller.joycon_button_zrl,
-        }
+        if self.controller.joycon.is_right():
+            clutch_pressed = bool(self.controller.joycon.get_button_zr())
+            gripper_pressed = bool(self.controller.joycon.get_button_r())
+        else:
+            clutch_pressed = bool(self.controller.joycon.get_button_zl())
+            gripper_pressed = bool(self.controller.joycon.get_button_l())
+        if gripper_pressed and not self.previous_gripper_button:
+            self.gripper_state = 0.0 if self.gripper_state > 0.5 else 1.0
+        self.previous_gripper_button = gripper_pressed
         self.pose_pub.publish(pose)
-        self.clutch_pub.publish(Bool(data=bool(state_by_name.get(clutch_name, 0))))
-        self.gripper_pub.publish(Float64(data=float(gripper)))
+        self.clutch_pub.publish(Bool(data=clutch_pressed))
+        self.gripper_pub.publish(Float64(data=self.gripper_state))
 
     def print_status(self):
         data = {}
