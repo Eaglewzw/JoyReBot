@@ -20,13 +20,6 @@
 | 仿真器   | Gazebo Harmonic (`gz-sim 8`)            |
 | 构建工具 | colcon                                                            |
 
-### 安装 Gazebo Harmonic 接口
-
-ROS 2 Humble 官方源仅提供 Fortress 接口，需安装 Gazebo 官方包：
-
-```bash
-sudo apt-get install -y gz-harmonic ros-humble-ros-gzharmonic
-```
 
 ## 快速开始
 
@@ -44,11 +37,6 @@ source install/setup.bash
 ros2 launch joyrebot_gazebo_sim sim.launch.py
 ```
 
-无头模式（服务器/SSH）：
-
-```bash
-ros2 launch joyrebot_gazebo_sim sim.launch.py gui:=false
-```
 
 ### 3. 关节控制接口
 

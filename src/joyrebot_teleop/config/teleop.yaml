@@ -1,0 +1,29 @@
+joycon_input:
+  ros__parameters:
+    device: right
+    publish_rate: 50.0
+    position_scale: [1.0, 1.0, 1.0]
+    orientation_scale: [1.0, 1.0, 1.0]
+    # SL is the hold-to-move clutch. ZR toggles the gripper.
+    clutch_button: sl
+
+teleop_controller:
+  ros__parameters:
+    control_rate: 50.0
+    input_timeout: 0.30
+    position_scale: [1.0, 1.0, 1.0]
+    orientation_scale: [1.0, 1.0, 1.0]
+    position_axis_map: [0, 1, 2]
+    position_axis_sign: [1.0, 1.0, 1.0]
+    orientation_axis_map: [0, 1, 2]
+    orientation_axis_sign: [1.0, 1.0, 1.0]
+    workspace_min: [-0.55, -0.55, -0.05]
+    workspace_max: [0.55, 0.55, 0.70]
+    joint_margin: 0.02
+    max_joint_speed: 0.7
+    gripper_open: 0.05
+    gripper_closed: 0.0
+    ik_damping: 0.06
+    ik_max_iterations: 120
+    ik_position_tolerance: 0.004
+    ik_orientation_tolerance: 0.04
