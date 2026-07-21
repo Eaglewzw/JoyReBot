@@ -5,7 +5,7 @@ import numpy as np
 from joyrebot_teleop.kinematics import SerialChain
 
 
-URDF = Path(__file__).parents[2] / "joyrebot_gazebo_sim/urdf/rebot_b601_rs.urdf"
+URDF = Path(__file__).parents[1] / "config/rebot_b601_kinematics.urdf"
 
 
 def test_chain_contains_six_arm_joints():

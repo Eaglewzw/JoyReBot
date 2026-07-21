@@ -13,7 +13,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("mock", default_value="false"),
         Node(package="joyrebot_teleop", executable="joycon_input", name="joycon_input",
-             parameters=[config], output="screen", condition=UnlessCondition(LaunchConfiguration("mock"))),
+             parameters=[config],
+             output="screen",
+             condition=UnlessCondition(LaunchConfiguration("mock"))),
         Node(package="joyrebot_teleop", executable="mock_input", name="mock_input",
              output="screen", condition=IfCondition(LaunchConfiguration("mock"))),
         Node(package="joyrebot_teleop", executable="teleop_controller", name="teleop_controller",

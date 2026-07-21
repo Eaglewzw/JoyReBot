@@ -12,7 +12,6 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>joyrebot_gazebo_sim</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>
   <!-- pip names: hidapi and PyGLM; setup.py installs them when needed. -->

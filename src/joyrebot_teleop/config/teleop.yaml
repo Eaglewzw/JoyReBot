@@ -1,11 +1,13 @@
 joycon_input:
   ros__parameters:
-    device: right
     publish_rate: 50.0
     position_scale: [1.0, 1.0, 1.0]
     orientation_scale: [1.0, 1.0, 1.0]
     # SL is the hold-to-move clutch. ZR toggles the gripper.
     clutch_button: sl
+    terminal_display: true
+    display_rate: 2.0
+    rescan_rate: 2.0
 
 teleop_controller:
   ros__parameters:

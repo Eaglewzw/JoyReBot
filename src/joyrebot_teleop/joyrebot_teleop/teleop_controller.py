@@ -30,7 +30,7 @@ class TeleopController(Node):
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
-        urdf = Path(get_package_share_directory("joyrebot_gazebo_sim")) / "urdf/rebot_b601_rs.urdf"
+        urdf = Path(get_package_share_directory("joyrebot_teleop")) / "config/rebot_b601_kinematics.urdf"
         self.chain = SerialChain.from_urdf(urdf)
         margin = float(self.get_parameter("joint_margin").value)
         self.chain.lower += margin

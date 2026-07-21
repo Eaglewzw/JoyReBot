@@ -9,8 +9,8 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", ["config/teleop.yaml"]),
-        ("share/" + package_name + "/launch", ["launch/teleop.launch.py", "launch/sim_teleop.launch.py"]),
+        ("share/" + package_name + "/config", ["config/teleop.yaml", "config/rebot_b601_kinematics.urdf"]),
+        ("share/" + package_name + "/launch", ["launch/teleop.launch.py"]),
     ],
     install_requires=["setuptools", "numpy", "scipy", "hidapi", "PyGLM"],
     zip_safe=True,
