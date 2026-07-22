@@ -3,22 +3,20 @@ joycon_input:
     publish_rate: 50.0
     position_scale: [1.0, 1.0, 1.0]
     orientation_scale: [1.0, 1.0, 1.0]
-    # ZR is the hold-to-move clutch (ZL on a fallback left controller).
-    clutch_button: zr
     terminal_display: true
     display_rate: 30.0
     rescan_rate: 2.0
 
 teleop_controller:
   ros__parameters:
-    control_rate: 50.0
+    control_rate: 60.0
     input_timeout: 0.30
     position_scale: [1.0, 1.0, 1.0]
     orientation_scale: [1.0, 1.0, 1.0]
     position_axis_map: [0, 1, 2]
     position_axis_sign: [1.0, 1.0, 1.0]
     orientation_axis_map: [0, 1, 2]
-    orientation_axis_sign: [1.0, 1.0, 1.0]
+    orientation_axis_sign: [-1.0, 1.0, 1.0]
     workspace_min: [-0.55, -0.55, -0.05]
     workspace_max: [0.55, 0.55, 0.70]
     joint_margin: 0.02

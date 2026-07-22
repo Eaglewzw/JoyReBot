@@ -18,7 +18,7 @@ class TeleopController(Node):
     def __init__(self):
         super().__init__("teleop_controller")
         defaults = {
-            "control_rate": 50.0, "input_timeout": 0.30,
+            "control_rate": 60.0, "input_timeout": 0.30,
             "position_scale": [1.0, 1.0, 1.0], "orientation_scale": [1.0, 1.0, 1.0],
             "position_axis_map": [0, 1, 2], "position_axis_sign": [1.0, 1.0, 1.0],
             "orientation_axis_map": [0, 1, 2], "orientation_axis_sign": [1.0, 1.0, 1.0],
@@ -47,12 +47,14 @@ class TeleopController(Node):
         self.gripper_pub = self.create_publisher(Float64, "/rebot/gripper/cmd_pos", 10)
         self.create_subscription(JointState, "/joint_states", self.on_joint_state, 10)
         self.create_subscription(PoseStamped, "/joycon_input/pose", self.on_pose, 10)
-        self.create_subscription(Bool, "/joycon_input/clutch", self.on_clutch, 10)
         self.create_subscription(Float64, "/joycon_input/gripper", self.on_gripper, 10)
+        self.create_subscription(Bool, "/joycon_input/reset", self.on_reset, 10)
         self.q = self.command = None
+        self.home_command = None
         self.input_pose = None
         self.last_input_time = None
-        self.clutch = False
+        self.reset_pressed = False
+        self.returning_home = False
         self.gripper = 1.0
         rate = float(param("control_rate"))
         self.dt = 1.0 / rate
@@ -64,32 +66,49 @@ class TeleopController(Node):
             self.q = np.asarray([positions[name] for name in self.JOINT_NAMES])
             if self.command is None:
                 self.command = self.q.copy()
-                self.get_logger().info("Joint feedback ready; teleoperation can be engaged")
+                self.home_command = self.q.copy()
+                self._engage_mapping()
+                self.get_logger().info("Joint feedback ready; teleoperation enabled")
 
     def on_pose(self, message):
         p, o = message.pose.position, message.pose.orientation
         self.input_pose = pose_to_matrix([p.x, p.y, p.z], [o.x, o.y, o.z, o.w])
         self.last_input_time = self.get_clock().now()
+        if self.command is not None and self.mapper.input_anchor is None and not self.returning_home:
+            self._engage_mapping()
 
-    def on_clutch(self, message):
-        requested = bool(message.data)
-        if requested and not self.clutch and self.input_pose is not None and self.q is not None:
-            self.mapper.engage(self.input_pose, self.chain.forward(self.q))
-            self.get_logger().info("Teleoperation engaged")
-        elif not requested and self.clutch:
-            self.mapper.clear()
-            self.get_logger().info("Teleoperation disengaged; holding joint positions")
-        self.clutch = requested
+    def _engage_mapping(self):
+        if self.input_pose is not None and self.command is not None:
+            self.mapper.engage(self.input_pose, self.chain.forward(self.command))
 
     def on_gripper(self, message):
         self.gripper = float(np.clip(message.data, 0.0, 1.0))
 
+    def on_reset(self, message):
+        pressed = bool(message.data)
+        if pressed and not self.reset_pressed and self.home_command is not None:
+            self.returning_home = True
+            self.mapper.clear()
+            self.get_logger().info(
+                "Home requested; returning to the startup joint positions")
+        self.reset_pressed = pressed
+
     def control(self):
         if self.q is None or self.command is None:
             return
+        max_step = float(self.get_parameter("max_joint_speed").value) * self.dt
+        if self.returning_home:
+            difference = self.home_command - self.command
+            self.command += np.clip(difference, -max_step, max_step)
+            if np.all(np.abs(difference) <= max_step):
+                self.command = self.home_command.copy()
+                self.returning_home = False
+                self._engage_mapping()
+                self.get_logger().info(
+                    "Startup joint positions reached; teleoperation resumed")
         fresh = self.last_input_time is not None and (
             self.get_clock().now() - self.last_input_time).nanoseconds * 1e-9 <= float(self.get_parameter("input_timeout").value)
-        if self.clutch and fresh and self.mapper.input_anchor is not None:
+        if (not self.returning_home and fresh and self.mapper.input_anchor is not None):
             target = self.mapper.map(self.input_pose)
             solution, success = self.chain.inverse(
                 target, self.command,
@@ -98,10 +117,9 @@ class TeleopController(Node):
                 position_tolerance=float(self.get_parameter("ik_position_tolerance").value),
                 orientation_tolerance=float(self.get_parameter("ik_orientation_tolerance").value))
             if success and np.all(np.isfinite(solution)):
-                max_step = float(self.get_parameter("max_joint_speed").value) * self.dt
                 self.command += np.clip(solution - self.command, -max_step, max_step)
             else:
-                self.get_logger().warn(
+                self.get_logger().warning(
                     "IK did not converge; holding the last valid joint command",
                     throttle_duration_sec=2.0)
         for name, value in zip(self.JOINT_NAMES, self.command):

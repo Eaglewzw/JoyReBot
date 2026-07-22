@@ -19,13 +19,14 @@ class JoyconInput(Node):
     def __init__(self):
         super().__init__("joycon_input")
         self.declare_parameter("publish_rate", 50.0)
-        self.declare_parameter("clutch_button", "zr")
         self.declare_parameter("terminal_display", True)
         self.declare_parameter("display_rate", 30.0)
         self.declare_parameter("rescan_rate", 2.0)
         self.pose_pub = self.create_publisher(PoseStamped, "~/pose", 10)
-        self.clutch_pub = self.create_publisher(Bool, "~/clutch", 10)
+        self.calibration_trigger_pub = self.create_publisher(
+            Bool, "~/calibration_trigger", 10)
         self.gripper_pub = self.create_publisher(Float64, "~/gripper", 10)
+        self.reset_pub = self.create_publisher(Bool, "~/reset", 10)
         if __package__:
             from .vendor.joyconrobotics import JoyconRobotics
         else:
@@ -42,10 +43,10 @@ class JoyconInput(Node):
             self.controller = self.monitors["right"]
         elif self.monitors:
             self.controller = self.monitors["left"]
-            self.get_logger().warn(
+            self.get_logger().warning(
                 "Right Joy-Con is unavailable; using connected left Joy-Con for control")
         else:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 "No Joy-Con connected. The node will keep running and rescan both sides.")
         rate = float(self.get_parameter("publish_rate").value)
         self.create_timer(1.0 / rate, self.publish_input)
@@ -54,7 +55,7 @@ class JoyconInput(Node):
         if bool(self.get_parameter("terminal_display").value):
             display_rate = max(0.2, float(self.get_parameter("display_rate").value))
             self.create_timer(1.0 / display_rate, self.print_status)
-        self.get_logger().info("Joy-Con monitor ready; hold the configured clutch button to move")
+        self.get_logger().info("Joy-Con monitor ready; teleoperation is continuously enabled")
 
     def connect_side(self, side, announce_failure=False):
         if side in self.monitors:
@@ -66,14 +67,14 @@ class JoyconInput(Node):
                 all_button_return=True,
                 gripper_open=1.0,
                 gripper_close=0.0,
-                enable_shoulder_translation=False,
+                enable_shoulder_translation=True,
             )
             self.monitors[side] = controller
             self.get_logger().info(f"{side.capitalize()} Joy-Con connected")
             return True
         except Exception as error:
             if announce_failure:
-                self.get_logger().warn(f"{side.capitalize()} Joy-Con unavailable: {error}")
+                self.get_logger().warning(f"{side.capitalize()} Joy-Con unavailable: {error}")
             return False
 
     def rescan(self):
@@ -98,17 +99,19 @@ class JoyconInput(Node):
         (pose.pose.orientation.x, pose.pose.orientation.y,
          pose.pose.orientation.z, pose.pose.orientation.w) = quaternion
         if self.controller.joycon.is_right():
-            clutch_pressed = bool(self.controller.joycon.get_button_zr())
-            gripper_pressed = bool(self.controller.joycon.get_button_r())
+            gripper_pressed = bool(self.controller.joycon.get_button_zr())
         else:
-            clutch_pressed = bool(self.controller.joycon.get_button_zl())
-            gripper_pressed = bool(self.controller.joycon.get_button_l())
+            gripper_pressed = bool(self.controller.joycon.get_button_zl())
         if gripper_pressed and not self.previous_gripper_button:
             self.gripper_state = 0.0 if self.gripper_state > 0.5 else 1.0
         self.previous_gripper_button = gripper_pressed
         self.pose_pub.publish(pose)
-        self.clutch_pub.publish(Bool(data=clutch_pressed))
         self.gripper_pub.publish(Float64(data=self.gripper_state))
+        self.calibration_trigger_pub.publish(Bool(data=gripper_pressed))
+        reset_pressed = (bool(self.controller.joycon.get_button_home())
+                         if self.controller.joycon.is_right()
+                         else bool(self.controller.joycon.get_button_capture()))
+        self.reset_pub.publish(Bool(data=reset_pressed))
 
     def print_status(self):
         data = {}

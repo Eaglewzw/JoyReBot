@@ -307,7 +307,8 @@ class JoyconRobotics:
                     self.orientation_sensor.set_yaw_diff(self.yaw_diff)
         
         # Up and down movement
-        joycon_button_up = self.joycon.get_button_r() if self.joycon.is_right() else self.joycon.get_button_l()
+        joycon_button_up = (self.joycon.get_button_r() if self.joycon.is_right()
+                            else self.joycon.get_button_l())
         if joycon_button_up == 1 and self.enable_shoulder_translation:
             if self.pure_z:
                 self.position[2] += 0.001 * self.dof_speed[2]

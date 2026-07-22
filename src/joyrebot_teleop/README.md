@@ -24,8 +24,8 @@ Joy-Con IMU、摇杆、按键
   joycon_input_node
           │
           ├── /joycon_input/pose       手柄六维位姿
-          ├── /joycon_input/clutch     离合/运动使能
-          └── /joycon_input/gripper    夹爪状态
+          ├── /joycon_input/gripper    夹爪状态
+          └── /joycon_input/reset      复位请求
           │
           ▼
   teleop_controller
@@ -54,14 +54,14 @@ Joy-Con IMU、摇杆、按键
 
 | Joy-Con 操作 | 功能 |
 |---|---|
-| 按住 `ZR` | 接合离合，允许机械臂跟随；左手柄回退控制时使用 `ZL` |
-| 松开 `ZR` | 停止更新目标，机械臂保持当前位置 |
 | 转动手柄 | 控制末端 roll、pitch、yaw |
 | 摇杆前后 | 控制末端沿手柄指向前后移动 |
 | 摇杆左右 | 控制末端横向移动 |
 | 按下摇杆 | 末端下降 |
-| `R` | 切换夹爪打开/关闭；左手柄回退控制时使用 `L` |
+| `R` / `L` | 末端上升 |
+| `ZR` / `ZL` | 切换夹爪打开/关闭 |
 | `+` | 重新执行 Joy-Con 静止标定 |
+| `Home` | 平滑返回启动时的关节位置；左手柄回退控制时使用 `Capture` |
 
 Joy-Con 启动标定时应水平静置约两秒。实际按键及摇杆位移的生成逻辑来自内置的
 `joyconrobotics` 库。
@@ -81,10 +81,9 @@ rescan_rate: 2.0
 同时显示两侧数据。先连接左手柄、随后连接右手柄时，主控会自动切换到右手柄。
 `rescan_rate` 控制未连接手柄的重新探测频率。
 
-## 3. 离合与相对位姿控制原理
+## 3. 自动接合与相对位姿控制原理
 
-`ZR` 是持续按压式的运动使能键，也称为离合键。只有左手柄参与控制时使用对应的
-`ZL` 键。按下离合的瞬间，控制器记录：
+控制器在手柄输入与机械臂关节反馈均就绪后自动记录：
 
 ```text
 input_anchor = Joy-Con 当前位姿
@@ -109,10 +108,9 @@ Joy-Con 相对旋转 = 当前旋转 × 基准旋转的逆
 
 这种方法具有以下特点：
 
-- 按下离合时，机械臂不会突然跳到 Joy-Con 的绝对位置。
-- 松开离合后，机械臂保持不动，操作者可以调整手臂到更舒适的位置。
-- 再次按下离合时，以新的手柄姿态和当前机械臂位姿重新建立映射。
-- 操作方式类似抬起鼠标后重新放置，不受操作者手臂活动范围限制。
+- 自动接合时，机械臂不会突然跳到 Joy-Con 的绝对位置。
+- 遥操持续生效，转动手柄或操作摇杆会立即改变末端目标。
+- Home 复位完成后会以当前手柄姿态和复位后的机械臂位姿重新建立映射。
 
 ## 4. 坐标轴映射
 
@@ -147,6 +145,26 @@ position_axis_map: [1, 0, 2]
 ```
 
 `position_scale` 和 `orientation_scale` 越小，机械臂对手柄运动越不敏感，适合精细操作。
+
+### 坐标轴校准助手
+
+可使用交互式校准节点生成上述四项配置。校准期间不要启动
+`teleop_controller`，以免机械臂跟随尚未校准的输入运动：
+
+```bash
+ros2 launch joyrebot_teleop axis_calibration.launch.py
+```
+
+该专用启动文件不会启动机械臂控制器。节点依次提示六个动作：前两项使用摇杆演示
+末端 `+X/+Y`，第三项按 `R`（左手柄为 `L`）演示 `+Z` 上升，后三项转动手柄
+演示绕 `+X/+Y/+Z` 的旋转。
+
+每项操作均为：先按住 `ZR`（左手柄使用 `ZL`）开始记录，执行单轴动作，先松开
+动作按键或摇杆，最后松开 `ZR/ZL` 完成记录。校准过程中 `ZR/ZL` 只作为录制键，
+不会控制机械臂。完成六项动作后，终端会输出可直接复制到
+`teleop.yaml` 的 `position_axis_map/sign` 和 `orientation_axis_map/sign`。
+
+若动作幅度太小或同一输入轴被重复用于多个输出轴，本次动作会被拒绝并要求重试。
 
 ## 5. 运动学和 IK 原理
 
@@ -231,8 +249,8 @@ joint_margin: 0.02
 最大单步变化 = max_joint_speed × 控制周期
 ```
 
-默认控制频率为 50 Hz、最大关节速度为 0.7 rad/s，因此单周期最大变化约为
-0.014 rad。
+默认控制频率为 60 Hz、最大关节速度为 0.7 rad/s，因此单周期最大变化约为
+0.0117 rad。
 
 ### 输入超时
 
@@ -249,7 +267,7 @@ input_timeout: 0.30
 
 ## 8. 夹爪控制
 
-`R` 每次按下会切换夹爪状态；只有左手柄参与控制时使用 `L`。输入节点发布归一化状态：
+`ZR` 每次按下会切换夹爪状态；只有左手柄参与控制时使用 `ZL`。输入节点发布归一化状态：
 
 ```text
 0.0 = 关闭
@@ -305,9 +323,9 @@ python3 /home/verser/CPP/JoyReBot/src/joyrebot_teleop/joyrebot_teleop/joycon_inp
 
 1. 将 Joy-Con 水平静置，等待标定完成。
 2. 确认机械臂已经稳定并收到 `/joint_states`。
-3. 保持 Joy-Con 静止后按住右手柄 `ZR`；使用左手柄回退控制时按住 `ZL`。
+3. 遥操会在手柄输入和关节反馈就绪后自动接合。
 4. 从小幅度动作开始测试各个位置和姿态方向。
-5. 如果方向不符合直觉，松开 `ZR`/`ZL`，停止运行并修改 `teleop.yaml`。
+5. 如果方向不符合直觉，停止运行并修改 `teleop.yaml`。
 
 ## 11. 无手柄 Mock 测试
 
@@ -315,7 +333,7 @@ python3 /home/verser/CPP/JoyReBot/src/joyrebot_teleop/joyrebot_teleop/joycon_inp
 ros2 launch joyrebot_teleop teleop.launch.py mock:=true
 ```
 
-Mock 节点会持续接合离合，并生成周期性的 X 方向小幅位移，用于验证：
+Mock 节点会生成周期性的 X 方向小幅位移，用于验证：
 
 - ROS 2 节点和话题连接；
 - URDF 运动学解析；
@@ -353,6 +371,6 @@ joyrebot_teleop/
 4. 分别确认 roll、pitch、yaw 的方向。
 5. 调整 `orientation_axis_map`、`orientation_axis_sign` 和灵敏度。
 6. 根据实际任务缩小 `workspace_min/max`。
-7. 在仿真中验证不可达目标、松开离合和手柄断连行为。
+7. 在仿真中验证不可达目标、输入超时和手柄断连行为。
 
 在所有方向、限位和失效保护验证完成前，不应直接连接真实机械臂。
