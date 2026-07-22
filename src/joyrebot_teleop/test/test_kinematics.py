@@ -30,3 +30,25 @@ def test_joint_limits_are_respected():
     solution, _ = chain.inverse(target, np.full(6, 100.0))
     assert np.all(solution <= chain.upper)
     assert np.all(solution >= chain.lower)
+
+
+def test_configured_home_supports_small_rotation_targets():
+    chain = SerialChain.from_urdf(URDF)
+    home = np.asarray([0.0, 0.3, 0.3, 0.0, 0.0, 0.0])
+    home_pose = chain.forward(home)
+    chain.lower += 0.02
+    chain.upper -= 0.02
+    from scipy.spatial.transform import Rotation
+    for axis in range(3):
+        for angle in (-np.deg2rad(10), np.deg2rad(10)):
+            target = home_pose.copy()
+            rotation = np.zeros(3)
+            rotation[axis] = angle
+            target[:3, :3] = (
+                Rotation.from_rotvec(rotation).as_matrix() @ home_pose[:3, :3])
+            solution, success = chain.inverse(
+                target, home, orientation_tolerance=0.015)
+            error = chain.pose_error(chain.forward(solution), target)
+            assert success
+            assert np.linalg.norm(error[:3]) <= 0.004
+            assert np.linalg.norm(error[3:]) <= 0.015

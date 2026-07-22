@@ -1,3 +1,5 @@
+import csv
+from datetime import datetime
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -6,6 +8,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from scipy.spatial.transform import Rotation
 from std_msgs.msg import Bool, Float64
 
 from .kinematics import SerialChain
@@ -22,11 +25,16 @@ class TeleopController(Node):
             "position_scale": [1.0, 1.0, 1.0], "orientation_scale": [1.0, 1.0, 1.0],
             "position_axis_map": [0, 1, 2], "position_axis_sign": [1.0, 1.0, 1.0],
             "orientation_axis_map": [0, 1, 2], "orientation_axis_sign": [1.0, 1.0, 1.0],
+            "orientation_limit": [1.20, 0.20, 0.75],
             "workspace_min": [-0.55, -0.55, -0.05], "workspace_max": [0.55, 0.55, 0.70],
             "joint_margin": 0.02, "max_joint_speed": 0.7,
+            "home_joint_positions": [0.0, 0.3, 0.3, 0.0, 0.0, 0.0],
+            "move_home_on_startup": True,
             "gripper_open": 0.05, "gripper_closed": 0.0,
             "ik_damping": 0.06, "ik_max_iterations": 120,
-            "ik_position_tolerance": 0.004, "ik_orientation_tolerance": 0.04,
+            "ik_position_tolerance": 0.004, "ik_orientation_tolerance": 0.015,
+            "data_logging": True, "data_log_directory": "teleop_logs",
+            "data_log_flush_interval": 1.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -36,9 +44,16 @@ class TeleopController(Node):
         self.chain.lower += margin
         self.chain.upper -= margin
         param = lambda name: self.get_parameter(name).value
+        configured_home = np.asarray(param("home_joint_positions"), dtype=float)
+        if configured_home.shape != (6,):
+            raise ValueError("home_joint_positions must contain exactly six values")
+        if np.any(configured_home < self.chain.lower) or np.any(configured_home > self.chain.upper):
+            raise ValueError("home_joint_positions must be inside the IK soft joint limits")
+        self.configured_home = configured_home
         self.mapper = RelativePoseMapper(param("position_scale"), param("orientation_scale"),
                                          param("position_axis_map"), param("position_axis_sign"),
                                          param("orientation_axis_map"), param("orientation_axis_sign"),
+                                         param("orientation_limit"),
                                          param("workspace_min"), param("workspace_max"))
         self.joint_pubs = {
             name: self.create_publisher(Float64, f"/rebot/{name}/cmd_pos", 10)
@@ -58,7 +73,65 @@ class TeleopController(Node):
         self.gripper = 1.0
         rate = float(param("control_rate"))
         self.dt = 1.0 / rate
+        self.log_file = None
+        self.log_writer = None
+        self.log_rows_since_flush = 0
+        self.log_flush_every = max(
+            1, int(rate * float(param("data_log_flush_interval"))))
+        self._open_data_log()
         self.create_timer(self.dt, self.control)
+
+    @staticmethod
+    def _pose_values(transform):
+        if transform is None:
+            return [float("nan")] * 6
+        return [*transform[:3, 3],
+                *Rotation.from_matrix(transform[:3, :3]).as_euler("xyz")]
+
+    def _open_data_log(self):
+        if not bool(self.get_parameter("data_logging").value):
+            return
+        try:
+            directory = Path(
+                str(self.get_parameter("data_log_directory").value)).expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = directory / f"teleop_{stamp}.csv"
+            self.log_file = path.open("w", newline="", encoding="utf-8")
+            self.log_writer = csv.writer(self.log_file)
+            columns = ["ros_time_s", "status", "input_age_s", "ik_success"]
+            columns += [f"input_{name}" for name in ("x", "y", "z", "roll", "pitch", "yaw")]
+            columns += [f"target_{name}" for name in ("x", "y", "z", "roll", "pitch", "yaw")]
+            for prefix in ("feedback", "ik", "command", "command_delta"):
+                columns += [f"{prefix}_joint{i}" for i in range(1, 7)]
+            columns += ["gripper_normalized", "gripper_command"]
+            self.log_writer.writerow(columns)
+            self.log_file.flush()
+            self.get_logger().info(f"Teleoperation data log: {path.resolve()}")
+        except OSError as error:
+            self.log_file = None
+            self.log_writer = None
+            self.get_logger().warning(f"Cannot create teleoperation data log: {error}")
+
+    def _write_data_log(self, status, input_age, ik_success, target,
+                        solution, command_delta, gripper_command):
+        if self.log_writer is None:
+            return
+        nan_joints = [float("nan")] * 6
+        row = [self.get_clock().now().nanoseconds * 1e-9, status, input_age,
+               "" if ik_success is None else int(ik_success)]
+        row += self._pose_values(self.input_pose)
+        row += self._pose_values(target)
+        row += list(self.q if self.q is not None else nan_joints)
+        row += list(solution if solution is not None else nan_joints)
+        row += list(self.command if self.command is not None else nan_joints)
+        row += list(command_delta)
+        row += [self.gripper, gripper_command]
+        self.log_writer.writerow(row)
+        self.log_rows_since_flush += 1
+        if self.log_rows_since_flush >= self.log_flush_every:
+            self.log_file.flush()
+            self.log_rows_since_flush = 0
 
     def on_joint_state(self, message):
         positions = dict(zip(message.name, message.position))
@@ -66,9 +139,25 @@ class TeleopController(Node):
             self.q = np.asarray([positions[name] for name in self.JOINT_NAMES])
             if self.command is None:
                 self.command = self.q.copy()
-                self.home_command = self.q.copy()
-                self._engage_mapping()
-                self.get_logger().info("Joint feedback ready; teleoperation enabled")
+                self.home_command = self.configured_home.copy()
+                outside = [
+                    name for name, value, lower, upper in zip(
+                        self.JOINT_NAMES, self.q, self.chain.lower, self.chain.upper)
+                    if value < lower or value > upper
+                ]
+                if outside:
+                    self.get_logger().warning(
+                        "Startup joints outside IK soft limits: "
+                        f"{', '.join(outside)}. Consider using a home pose farther "
+                        "from the mechanical limits.")
+                if (bool(self.get_parameter("move_home_on_startup").value)
+                        and not np.allclose(self.command, self.home_command, atol=1e-3)):
+                    self.returning_home = True
+                    self.get_logger().info(
+                        "Joint feedback ready; moving to the configured Home pose before teleoperation")
+                else:
+                    self._engage_mapping()
+                    self.get_logger().info("Joint feedback ready; teleoperation enabled")
 
     def on_pose(self, message):
         p, o = message.pose.position, message.pose.orientation
@@ -96,8 +185,14 @@ class TeleopController(Node):
     def control(self):
         if self.q is None or self.command is None:
             return
+        previous_command = self.command.copy()
+        target = None
+        solution = None
+        ik_success = None
+        status = "hold"
         max_step = float(self.get_parameter("max_joint_speed").value) * self.dt
         if self.returning_home:
+            status = "returning_home"
             difference = self.home_command - self.command
             self.command += np.clip(difference, -max_step, max_step)
             if np.all(np.abs(difference) <= max_step):
@@ -106,8 +201,10 @@ class TeleopController(Node):
                 self._engage_mapping()
                 self.get_logger().info(
                     "Startup joint positions reached; teleoperation resumed")
-        fresh = self.last_input_time is not None and (
-            self.get_clock().now() - self.last_input_time).nanoseconds * 1e-9 <= float(self.get_parameter("input_timeout").value)
+        input_age = ((self.get_clock().now() - self.last_input_time).nanoseconds * 1e-9
+                     if self.last_input_time is not None else float("nan"))
+        fresh = (self.last_input_time is not None
+                 and input_age <= float(self.get_parameter("input_timeout").value))
         if (not self.returning_home and fresh and self.mapper.input_anchor is not None):
             target = self.mapper.map(self.input_pose)
             solution, success = self.chain.inverse(
@@ -116,9 +213,12 @@ class TeleopController(Node):
                 max_iterations=int(self.get_parameter("ik_max_iterations").value),
                 position_tolerance=float(self.get_parameter("ik_position_tolerance").value),
                 orientation_tolerance=float(self.get_parameter("ik_orientation_tolerance").value))
-            if success and np.all(np.isfinite(solution)):
+            ik_success = bool(success and np.all(np.isfinite(solution)))
+            if ik_success:
+                status = "tracking"
                 self.command += np.clip(solution - self.command, -max_step, max_step)
             else:
+                status = "ik_failed"
                 self.get_logger().warning(
                     "IK did not converge; holding the last valid joint command",
                     throttle_duration_sec=2.0)
@@ -126,7 +226,18 @@ class TeleopController(Node):
             self.joint_pubs[name].publish(Float64(data=float(value)))
         closed = float(self.get_parameter("gripper_closed").value)
         opened = float(self.get_parameter("gripper_open").value)
-        self.gripper_pub.publish(Float64(data=closed + self.gripper * (opened - closed)))
+        gripper_command = closed + self.gripper * (opened - closed)
+        self.gripper_pub.publish(Float64(data=gripper_command))
+        self._write_data_log(
+            status, input_age, ik_success, target, solution,
+            self.command - previous_command, gripper_command)
+
+    def destroy_node(self):
+        if self.log_file is not None:
+            self.log_file.flush()
+            self.log_file.close()
+            self.log_file = None
+        return super().destroy_node()
 
 
 def main(args=None):

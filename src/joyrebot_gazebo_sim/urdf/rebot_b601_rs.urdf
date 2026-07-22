@@ -865,17 +865,17 @@
       <joint_name>joint1</joint_name><topic>/rebot/joint1/cmd_pos</topic><p_gain>18</p_gain><d_gain>2</d_gain><cmd_max>36</cmd_max><cmd_min>-36</cmd_min>
     </plugin>
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
-      <joint_name>joint2</joint_name><topic>/rebot/joint2/cmd_pos</topic><p_gain>35</p_gain><d_gain>3</d_gain><cmd_max>36</cmd_max><cmd_min>-36</cmd_min>
+      <joint_name>joint2</joint_name><topic>/rebot/joint2/cmd_pos</topic><p_gain>35</p_gain><i_gain>1</i_gain><d_gain>3</d_gain><i_max>8</i_max><i_min>-8</i_min><cmd_max>36</cmd_max><cmd_min>-36</cmd_min>
     </plugin>
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <!-- joint3 carries the complete wrist / gripper chain.  The MuJoCo
            gain (18) cannot lift it from the lower stop in Gazebo under
            gravity, so use a stiffer, better damped position loop while
            retaining the physical 36 N.m effort limit. -->
-      <joint_name>joint3</joint_name><topic>/rebot/joint3/cmd_pos</topic><p_gain>100</p_gain><d_gain>6</d_gain><cmd_max>36</cmd_max><cmd_min>-36</cmd_min>
+      <joint_name>joint3</joint_name><topic>/rebot/joint3/cmd_pos</topic><p_gain>100</p_gain><i_gain>2</i_gain><d_gain>6</d_gain><i_max>12</i_max><i_min>-12</i_min><cmd_max>36</cmd_max><cmd_min>-36</cmd_min>
     </plugin>
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
-      <joint_name>joint4</joint_name><topic>/rebot/joint4/cmd_pos</topic><p_gain>45</p_gain><d_gain>4</d_gain><cmd_max>14</cmd_max><cmd_min>-14</cmd_min>
+      <joint_name>joint4</joint_name><topic>/rebot/joint4/cmd_pos</topic><p_gain>45</p_gain><i_gain>1</i_gain><d_gain>4</d_gain><i_max>6</i_max><i_min>-6</i_min><cmd_max>14</cmd_max><cmd_min>-14</cmd_min>
     </plugin>
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>joint5</joint_name><topic>/rebot/joint5/cmd_pos</topic><p_gain>12</p_gain><d_gain>2</d_gain><cmd_max>14</cmd_max><cmd_min>-14</cmd_min>

@@ -11,13 +11,17 @@ def pose_to_matrix(position, quaternion):
 
 class RelativePoseMapper:
     def __init__(self, position_scale, orientation_scale, position_map, position_sign,
-                 orientation_map, orientation_sign, workspace_min, workspace_max):
+                 orientation_map, orientation_sign, orientation_limit,
+                 workspace_min, workspace_max):
         self.position_scale = np.asarray(position_scale)
         self.orientation_scale = np.asarray(orientation_scale)
         self.position_map = np.asarray(position_map, dtype=int)
         self.position_sign = np.asarray(position_sign)
         self.orientation_map = np.asarray(orientation_map, dtype=int)
         self.orientation_sign = np.asarray(orientation_sign)
+        self.orientation_limit = np.asarray(orientation_limit, dtype=float)
+        if self.orientation_limit.shape != (3,) or np.any(self.orientation_limit <= 0.0):
+            raise ValueError("orientation_limit must contain three positive radians")
         self.workspace_min = np.asarray(workspace_min)
         self.workspace_max = np.asarray(workspace_max)
         self.input_anchor = None
@@ -40,5 +44,7 @@ class RelativePoseMapper:
                                 self.workspace_min, self.workspace_max)
         delta_rotation = Rotation.from_matrix(input_pose[:3, :3] @ self.input_anchor[:3, :3].T).as_rotvec()
         mapped_rotation = delta_rotation[self.orientation_map] * self.orientation_sign * self.orientation_scale
+        mapped_rotation = np.clip(mapped_rotation, -self.orientation_limit,
+                                  self.orientation_limit)
         output[:3, :3] = Rotation.from_rotvec(mapped_rotation).as_matrix() @ self.robot_anchor[:3, :3]
         return output

@@ -130,6 +130,7 @@ position_axis_sign: [1.0, 1.0, 1.0]
 orientation_scale: [1.0, 1.0, 1.0]
 orientation_axis_map: [0, 1, 2]
 orientation_axis_sign: [1.0, 1.0, 1.0]
+orientation_limit: [1.20, 0.20, 0.75]
 ```
 
 例如，机械臂 X 方向与期望相反时：
@@ -145,6 +146,8 @@ position_axis_map: [1, 0, 2]
 ```
 
 `position_scale` 和 `orientation_scale` 越小，机械臂对手柄运动越不敏感，适合精细操作。
+`orientation_limit` 以弧度限制接合后末端相对姿态的旋转向量分量，当前分别约为
+Roll ±69°、Pitch ±11.5°、Yaw ±43°，用于减少手柄姿态进入 IK 不可达区域的概率。
 
 ### 坐标轴校准助手
 
@@ -241,6 +244,16 @@ workspace_max: [0.55, 0.55, 0.70]
 joint_margin: 0.02
 ```
 
+控制器使用固定的安全 Home 关节姿态，避免从 joint2/joint3 的机械下限直接开始姿态 IK：
+
+```yaml
+home_joint_positions: [0.0, 0.3, 0.3, 0.0, 0.0, 0.0]
+move_home_on_startup: true
+```
+
+收到第一帧完整关节反馈后，机械臂会按 `max_joint_speed` 平滑移动到 Home；到达后才建立
+手柄与末端的相对位姿锚点。`Home/Capture` 按键也返回同一姿态。
+
 ### 关节速度限制
 
 每周期允许的最大关节变化为：
@@ -282,6 +295,29 @@ gripper_open: 0.05
 ```
 
 左右夹爪由机械臂控制后端根据同一个夹爪位置命令同步控制。
+
+## 9. 遥操数据日志
+
+控制器默认以控制频率将遥操数据写入 CSV。每次启动会在 `teleop_logs/` 下创建一个带时间戳的
+独立文件，例如 `teleop_20260722_143000.csv`。日志包含：
+
+- Joy-Con 输入位置和 roll/pitch/yaw；
+- 映射后的末端目标位置和姿态；
+- `/joint_states` 的 joint1～joint6 实际反馈；
+- 本周期 IK 求出的 joint1～joint6；
+- 限速后实际发布的 joint1～joint6 命令及单周期变化量；
+- IK 成功状态、控制状态、输入延迟和夹爪命令。
+
+相关参数：
+
+```yaml
+data_logging: true
+data_log_directory: teleop_logs
+data_log_flush_interval: 1.0
+```
+
+`data_log_directory` 为相对路径时，相对于启动命令的当前目录。若不需要记录，可将
+`data_logging` 设置为 `false`。程序每隔 `data_log_flush_interval` 秒刷新文件，并在正常退出时关闭文件。
 
 ## 9. 构建
 

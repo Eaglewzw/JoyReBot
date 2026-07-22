@@ -40,3 +40,19 @@ def test_joint3_controller_can_lift_distal_chain():
     assert float(joint3.findtext("p_gain")) >= 80.0
     assert float(joint3.findtext("d_gain")) >= 5.0
     assert float(joint3.findtext("cmd_max")) == 36.0
+
+
+def test_loaded_arm_joints_have_bounded_integral_compensation():
+    root = ET.parse(PACKAGE / "urdf" / "rebot_b601_rs.urdf").getroot()
+    controllers = {
+        plugin.findtext("joint_name"): plugin
+        for plugin in root.findall(".//gazebo/plugin")
+        if plugin.findtext("joint_name") is not None
+    }
+    for name in ("joint2", "joint3", "joint4"):
+        controller = controllers[name]
+        assert float(controller.findtext("i_gain")) > 0.0
+        assert float(controller.findtext("i_min")) < 0.0
+        assert float(controller.findtext("i_max")) > 0.0
+        assert abs(float(controller.findtext("i_min"))) <= float(controller.findtext("cmd_max"))
+        assert float(controller.findtext("i_max")) <= float(controller.findtext("cmd_max"))
