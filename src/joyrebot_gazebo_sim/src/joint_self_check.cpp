@@ -10,16 +10,30 @@
 #include <iomanip>
 #include <sstream>
 
-// ── Joint definitions ──────────────────────────────────────────────────────────
-
+// ── 关节定义 ────────────────────────────────────────────────────────────────────
+//
+// 下表中的 lower/upper 直接取自 urdf/rebot_b601_rs.urdf 中每个关节的
+// <limit> 标签，是 SolidWorks 模型导出的物理机械限位，不可随意修改。
+//
+//   关节          URDF 限位           机械原因
+//   ─────         ──────────          ────────────────────
+//   joint1       -2.8 … 2.8   rad    底座旋转，线束/内部结构限制
+//   joint2        0.0 … 3.14  rad    肩关节，只能向前摆动
+//   joint3       -0.01… 3.14  rad    肘关节，几乎不能向后弯
+//   joint4       -1.57… 1.57  rad    腕部俯仰，±90° 机械止挡
+//   joint5       -1.57… 1.57  rad    腕部横滚，±90° 机械止挡
+//   joint6       -3.14… 3.14  rad    法兰旋转，360° 满行程
+//   joint_left    0.0 … 0.05  m      夹爪直线行程
+// ── 关节定义（结束） ────────────────────────────────────────────────────────────────────
 const std::vector<JointConfig> JOINTS = {
-  {"joint1", "/rebot/joint1/cmd_pos", 0.3, -2.8, 2.8, 0.04, 0.04, "rad", ""},
-  {"joint2", "/rebot/joint2/cmd_pos", 0.3, 0.0, 3.14, 0.12, 0.04, "rad", ""},
-  {"joint3", "/rebot/joint3/cmd_pos", 0.3, -0.01, 3.14, 0.08, 0.04, "rad", ""},
-  {"joint4", "/rebot/joint4/cmd_pos", 0.3, -1.57, 1.57, 0.10, 0.05, "rad", ""},
-  {"joint5", "/rebot/joint5/cmd_pos", 0.3, -1.57, 1.57, 0.08, 0.05, "rad", ""},
-  {"joint6", "/rebot/joint6/cmd_pos", 1.57, -3.14, 3.14, 0.10, 0.05, "rad", ""},
-  {"joint_left", "/rebot/gripper/cmd_pos", 0.015, 0.0, 0.05, 0.004, 0.01, "m", "gripper"},
+  // name         cmd_topic                     delta  lower   upper  pos_tol  vel_tol  unit  label
+  {"joint1",      "/rebot/joint1/cmd_pos",      0.3,   -2.8,   2.8,   0.04,    0.04,    "rad", ""},
+  {"joint2",      "/rebot/joint2/cmd_pos",      0.3,    0.0,   3.14,  0.12,    0.04,    "rad", ""},
+  {"joint3",      "/rebot/joint3/cmd_pos",      0.3,   -0.01,  3.14,  0.08,    0.04,    "rad", ""},
+  {"joint4",      "/rebot/joint4/cmd_pos",      0.3,   -1.57,  1.57,  0.10,    0.05,    "rad", ""},
+  {"joint5",      "/rebot/joint5/cmd_pos",      0.3,   -1.57,  1.57,  0.08,    0.05,    "rad", ""},
+  {"joint6",      "/rebot/joint6/cmd_pos",      1.57,  -3.14,  3.14,  0.10,    0.05,    "rad", ""},
+  {"joint_left",  "/rebot/gripper/cmd_pos",     0.015,  0.0,   0.05,  0.004,   0.01,    "m",   "gripper"},
 };
 
 // ── Utility ────────────────────────────────────────────────────────────────────

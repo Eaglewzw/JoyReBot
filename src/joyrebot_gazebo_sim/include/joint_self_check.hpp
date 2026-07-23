@@ -16,15 +16,15 @@
 
 struct JointConfig
 {
-  std::string joint_name;
-  std::string cmd_topic;
-  double test_delta;
-  double lower;
-  double upper;
-  double target_tolerance;
-  double velocity_tolerance;
-  std::string unit;
-  std::string label;
+  std::string joint_name;       ///< /joint_states 及 URDF 中的关节名
+  std::string cmd_topic;        ///< 位置指令话题
+  double test_delta;            ///< 测试偏移量（从当前位置 ± 该值）
+  double lower;                 ///< 关节下限 — 取自 URDF <limit lower="…">
+  double upper;                 ///< 关节上限 — 取自 URDF <limit upper="…">
+  double target_tolerance;      ///< 到达目标的最大位置误差
+  double velocity_tolerance;    ///< 判定稳定的最大速度
+  std::string unit;             ///< "rad" = 旋转关节, "m" = 直线关节
+  std::string label;            ///< 测试报告中的显示名（空则用 joint_name）
 };
 
 /// Ordered list of joints tested by the node.
