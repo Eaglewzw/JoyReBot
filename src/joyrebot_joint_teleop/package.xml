@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>joyrebot_joint_teleop</name>
+  <version>0.1.0</version>
+  <description>Joint-space Joy-Con jogging for the reBot B601-RS arm. Runs instead of joyrebot_teleop, never alongside it.</description>
+  <maintainer email="maintainer@example.com">JoyReBot maintainers</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <!-- Reuses the vendored joyconrobotics HID driver, the URDF joint limits and
+       the SerialChain parser from joyrebot_teleop. -->
+  <exec_depend>joyrebot_teleop</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

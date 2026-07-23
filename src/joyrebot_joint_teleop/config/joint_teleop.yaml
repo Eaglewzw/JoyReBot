@@ -1,0 +1,63 @@
+joint_teleop:
+  ros__parameters:
+    control_rate: 60.0
+    input_timeout: 0.30
+    display_rate: 10.0
+    rescan_rate: 2.0
+    terminal_display: true
+
+    # ── 通道映射 ────────────────────────────────────────────────────────────
+    # 六个通道固定顺序: roll, pitch, yaw, 摇杆垂直, 摇杆水平, R/摇杆按下
+    # 每个通道绑一个关节下标(0=joint1 ... 5=joint6)
+    #   roll       → joint6 末端旋转     pitch      → joint4 腕俯仰
+    #   yaw        → joint1 底座回转     摇杆垂直    → joint2 大臂
+    #   摇杆水平    → joint5 腕滚转      R/摇杆按下  → joint3 小臂
+    channel_joint: [5, 3, 0, 1, 4, 2]
+
+    # absolute: 关节一比一跟随手柄角度(相对离合锚点)
+    # rate:     手柄偏离锚点的量决定关节角速度
+    # off:      忽略该通道,对应关节不动
+    #
+    # roll/pitch 用 absolute —— IMU 以重力为基准,不漂移,这两个自由度最像人手。
+    # yaw 用 rate —— yaw 没有绝对参考、必然漂移,做成 absolute 底座会自己转。
+    #   若你能接受漂移、想要完全的手腕跟随,把第三项改成 absolute 并把
+    #   channel_deadzone 第三项改成 0.0,操作中用 X 键随时重新锚定。
+    channel_mode: ["absolute", "absolute", "rate", "rate", "rate", "rate"]
+
+    # ★ 灵敏度主旋钮。数值越大越灵敏,两类通道的单位不同:
+    #   absolute 通道(roll/pitch): 关节弧度 / 手柄弧度。
+    #       1.0 = 手腕转多少关节转多少;0.5 = 手腕要转两倍才到位(更迟钝、更好控)
+    #   rate 通道(yaw/摇杆/按键):  满输入时的关节角速度 rad/s。
+    #       yaw 的"满输入"是手腕偏离锚点 1 rad;摇杆是推到底;按键是按下
+    # yaw(第 3 项)刻意压得比别的低: 它没有绝对参考、最容易漂,
+    # 低增益 + 大死区一起把漂移压住。
+    channel_scale: [0.75, 0.5, 0.35, 0.25, 0.4, 0.25]
+    # 方向反了就把对应项改成 -1.0。yaw 取负 = 手腕左摆时底座跟着左转。
+    channel_sign: [1.0, 1.0, -1.0, 1.0, 1.0, 1.0]
+    # absolute 通道建议留 0(死区会让跟随出现死点);rate 通道用来抑制手抖和漂移
+    channel_deadzone: [0.0, 0.0, 0.35, 0.15, 0.15, 0.0]
+
+    # 单周期变化上限(rad/s)。这是 IMU 抽风时的安全网,
+    # 要高于正常手腕速度,否则跟随会发黏。
+    max_tracking_speed: 3.0
+
+    # ── 摇杆标定 ────────────────────────────────────────────────────────────
+    stick_center: 2048.0
+    stick_half_range: 1400.0
+    # 注意轴名: vertical = 摇杆前后(驱动 joint2), horizontal = 摇杆左右(驱动 joint5)
+    # 前推摇杆时 raw 值增大,乘上这里的符号后决定关节往哪转
+    stick_horizontal_sign: -1.0
+    stick_vertical_sign: 1.0
+
+    # ── 安全 ────────────────────────────────────────────────────────────────
+    joint_margin: 0.02
+    max_joint_speed: 0.7          # 仅用于启动/按 Home 回原位的斜坡限速
+    home_joint_positions: [0.0, 0.3, 0.3, 0.0, 0.0, 0.0]
+    move_home_on_startup: true
+
+    gripper_open: 0.05
+    gripper_closed: 0.0
+
+    data_logging: true
+    data_log_directory: joint_teleop_logs
+    data_log_flush_interval: 1.0
