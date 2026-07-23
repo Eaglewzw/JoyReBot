@@ -8,10 +8,14 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
-add_executable(test_joints src/test_joints.cpp)
-ament_target_dependencies(test_joints rclcpp std_msgs sensor_msgs)
+add_executable(joint_self_check src/joint_self_check.cpp)
+target_include_directories(joint_self_check PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(joint_self_check rclcpp std_msgs sensor_msgs)
 
-install(TARGETS test_joints
+install(TARGETS joint_self_check
   DESTINATION lib/${PROJECT_NAME}
 )
 
