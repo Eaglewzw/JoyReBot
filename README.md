@@ -50,7 +50,6 @@ ros2 launch joyrebot_gazebo_sim sim.launch.py gui:=false
 
 #### 自检测试
 
-
 ```bash
 ros2 run joyrebot_gazebo_sim joint_self_check
 ```
