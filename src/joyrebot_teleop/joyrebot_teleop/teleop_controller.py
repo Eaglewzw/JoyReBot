@@ -25,8 +25,8 @@ class TeleopController(Node):
             "position_scale": [1.0, 1.0, 1.0], "orientation_scale": [1.0, 1.0, 1.0],
             "position_axis_map": [0, 1, 2], "position_axis_sign": [1.0, 1.0, 1.0],
             "orientation_axis_map": [0, 1, 2], "orientation_axis_sign": [1.0, 1.0, 1.0],
-            "orientation_limit": [1.20, 0.20, 0.75],
-            "workspace_min": [-0.55, -0.55, -0.05], "workspace_max": [0.55, 0.55, 0.70],
+            "orientation_limit": [2.09, 0.23, 0.86],
+            "workspace_min": [-0.55, -0.55, -0.05], "workspace_max": [0.70, 0.55, 0.70],
             "joint_margin": 0.02, "max_joint_speed": 0.7,
             "home_joint_positions": [0.0, 0.3, 0.3, 0.0, 0.0, 0.0],
             "move_home_on_startup": True,
@@ -34,25 +34,44 @@ class TeleopController(Node):
             "ik_solver": "dls",
             "ik_damping": 0.06, "ik_max_iterations": 120,
             "ik_position_tolerance": 0.004, "ik_orientation_tolerance": 0.015,
+            "ik_position_weight": 100.0, "ik_orientation_weight": 0.35,
+            "ik_manipulability_weight": 0.0, "ik_qp_substeps": 1,
             "data_logging": True, "data_log_directory": "teleop_logs",
             "data_log_flush_interval": 1.0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
+        param = lambda name: self.get_parameter(name).value
         urdf = Path(get_package_share_directory("joyrebot_teleop")) / "config/rebot_b601_kinematics.urdf"
-        solver_kind = str(self.get_parameter("ik_solver").value).lower()
+        solver_kind = str(param("ik_solver")).strip().lower()
+        rate = float(param("control_rate"))
+        margin = float(param("joint_margin"))
+        max_joint_speed = float(param("max_joint_speed"))
         if solver_kind == "placo":
             from .placo_solver import PlacoChain
             self.chain = PlacoChain(
-                urdf, dt=1.0 / float(self.get_parameter("control_rate").value))
-            self.get_logger().info("IK solver: PlaCo (QP)")
-        else:
+                urdf,
+                dt=1.0 / rate,
+                position_weight=float(param("ik_position_weight")),
+                orientation_weight=float(param("ik_orientation_weight")),
+                manipulability_weight=float(param("ik_manipulability_weight")),
+                joint_margin=margin,
+                max_joint_speed=max_joint_speed,
+                solve_iterations=int(param("ik_qp_substeps")))
+            self.get_logger().info(
+                "IK solver: PlaCo constrained incremental QP "
+                f"({int(param('ik_qp_substeps'))} substep(s), "
+                f"position/orientation weights "
+                f"{float(param('ik_position_weight'))}:"
+                f"{float(param('ik_orientation_weight'))})")
+        elif solver_kind == "dls":
             self.chain = SerialChain.from_urdf(urdf)
             self.get_logger().info("IK solver: damped least squares (DLS)")
-        margin = float(self.get_parameter("joint_margin").value)
-        self.chain.lower += margin
-        self.chain.upper -= margin
-        param = lambda name: self.get_parameter(name).value
+            self.chain.lower += margin
+            self.chain.upper -= margin
+        else:
+            raise ValueError(
+                f"Unsupported ik_solver {solver_kind!r}; expected 'dls' or 'placo'")
         configured_home = np.asarray(param("home_joint_positions"), dtype=float)
         if configured_home.shape != (6,):
             raise ValueError("home_joint_positions must contain exactly six values")
@@ -80,7 +99,6 @@ class TeleopController(Node):
         self.reset_pressed = False
         self.returning_home = False
         self.gripper = 1.0
-        rate = float(param("control_rate"))
         self.dt = 1.0 / rate
         self.log_file = None
         self.log_writer = None
@@ -108,7 +126,12 @@ class TeleopController(Node):
             path = directory / f"teleop_{stamp}.csv"
             self.log_file = path.open("w", newline="", encoding="utf-8")
             self.log_writer = csv.writer(self.log_file)
-            columns = ["ros_time_s", "status", "input_age_s", "ik_success"]
+            columns = [
+                "ros_time_s", "status", "input_age_s", "ik_success",
+                "ik_target_reached", "ik_position_error_m",
+                "ik_orientation_error_rad", "ik_at_joint_limit",
+                "ik_velocity_limited",
+            ]
             columns += [f"input_{name}" for name in ("x", "y", "z", "roll", "pitch", "yaw")]
             columns += [f"target_{name}" for name in ("x", "y", "z", "roll", "pitch", "yaw")]
             for prefix in ("feedback", "ik", "command", "command_delta"):
@@ -127,8 +150,19 @@ class TeleopController(Node):
         if self.log_writer is None:
             return
         nan_joints = [float("nan")] * 6
+        diagnostics = (getattr(self.chain, "last_diagnostics", None)
+                       if ik_success is not None else None)
         row = [self.get_clock().now().nanoseconds * 1e-9, status, input_age,
                "" if ik_success is None else int(ik_success)]
+        row += ([
+            int(diagnostics.target_reached),
+            diagnostics.position_error,
+            diagnostics.orientation_error,
+            int(diagnostics.at_joint_limit),
+            int(diagnostics.velocity_limited),
+        ] if diagnostics is not None else [
+            "", float("nan"), float("nan"), "", "",
+        ])
         row += self._pose_values(self.input_pose)
         row += self._pose_values(target)
         row += list(self.q if self.q is not None else nan_joints)
@@ -224,12 +258,24 @@ class TeleopController(Node):
                 orientation_tolerance=float(self.get_parameter("ik_orientation_tolerance").value))
             ik_success = bool(success and np.all(np.isfinite(solution)))
             if ik_success:
-                status = "tracking"
+                diagnostics = getattr(self.chain, "last_diagnostics", None)
+                status = ("tracking_limited"
+                          if diagnostics is not None
+                          and diagnostics.at_joint_limit
+                          and not diagnostics.target_reached
+                          else "tracking")
                 self.command += np.clip(solution - self.command, -max_step, max_step)
+                self.command = np.clip(
+                    self.command, self.chain.lower, self.chain.upper)
             else:
                 status = "ik_failed"
+                diagnostics = getattr(self.chain, "last_diagnostics", None)
+                detail = (f" ({diagnostics.failure})"
+                          if diagnostics is not None and diagnostics.failure
+                          else "")
                 self.get_logger().warning(
-                    "IK did not converge; holding the last valid joint command",
+                    "IK produced no safe command; holding the last valid "
+                    f"joint command{detail}",
                     throttle_duration_sec=2.0)
         for name, value in zip(self.JOINT_NAMES, self.command):
             self.joint_pubs[name].publish(Float64(data=float(value)))

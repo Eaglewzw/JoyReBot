@@ -6,6 +6,16 @@ joycon_input:
     terminal_display: true
     display_rate: 30.0
     rescan_rate: 2.0
+    # The stick controls controller-yaw-relative motion in the horizontal XY
+    # plane. Pitch/roll cannot produce Z motion; use R/L and stick-click for Z.
+    planar_stick_translation: true
+    # Six-axis Mahony quaternion filter. Gravity corrects roll/pitch; yaw is
+    # integrated from the calibrated gyro because Joy-Con has no magnetometer.
+    attitude_filter_kp: 2.5
+    attitude_filter_ki: 0.05
+    # Ignore accelerometer correction when its norm differs from 1 g by more
+    # than this amount, so hand translation is not mistaken for tilt.
+    attitude_accel_rejection: 0.25
 
 teleop_controller:
   ros__parameters:
@@ -17,8 +27,7 @@ teleop_controller:
     position_axis_sign: [1.0, 1.0, 1.0]
     orientation_axis_map: [0, 1, 2]
     orientation_axis_sign: [-1.0, -1.0, 1.0]
-    # Relative Roll/Pitch/Yaw rotation-vector limits (rad): about 69/11.5/43 deg.
-    # orientation_limit: [1.20, 0.75, 0.75]
+    # Relative Roll/Pitch/Yaw rotation-vector limits (rad): about 120/13/49 deg.
     orientation_limit: [2.09, 0.23, 0.86]   # roll ±120° / pitch ±13° / yaw ±49°
     workspace_min: [-0.55, -0.55, -0.05]
     workspace_max: [0.70, 0.55, 0.70]
@@ -29,13 +38,23 @@ teleop_controller:
     gripper_open: 0.05
     gripper_closed: 0.0
     # IK backend: "dls" (built-in damped least squares) or "placo" (QP solver;
-    # needs `pip install placo`). PlaCo treats joint/velocity limits as hard
-    # constraints and degrades gracefully instead of freezing at a joint limit.
+    # install the package's [placo] extra). PlaCo advances one constrained
+    # velocity-level IK step per control period.
     ik_solver: placo
+    # DLS-only parameters.
     ik_damping: 0.06
     ik_max_iterations: 120
+    # Shared convergence/diagnostic tolerances.
     ik_position_tolerance: 0.004
     ik_orientation_tolerance: 0.015
+    # PlaCo-only task weights. The 100:0.35 ratio keeps the TCP position nearly
+    # fixed while a large orientation command consumes the joint-speed budget.
+    ik_position_weight: 100.0
+    ik_orientation_weight: 0.35
+    ik_manipulability_weight: 0.0
+    # Non-linear QP re-linearisation steps within one control period. Each step
+    # uses dt/N, so increasing this does not weaken the velocity bound.
+    ik_qp_substeps: 1
     data_logging: true
     data_log_directory: teleop_logs
     data_log_flush_interval: 1.0

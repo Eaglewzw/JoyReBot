@@ -83,7 +83,7 @@ ros2 launch joyrebot_joint_teleop joint_teleop.launch.py
 | 操作 | 功能 |
 | --- | --- |
 | 转动手柄 | 控制末端姿态 |
-| 摇杆 | 控制末端平移 |
+| 摇杆 | 控制末端水平 XY 平移（方向随手柄 yaw，忽略 pitch/roll） |
 | 按下摇杆 | 控制末端下降 |
 | `R` / `L` | 控制末端上升 |
 | `ZR` / `ZL` | 切换夹爪开关状态 |
@@ -106,5 +106,4 @@ ros2 launch joyrebot_joint_teleop joint_teleop.launch.py
 | `X`（右）/ `↑`（左） | 以当前手腕姿态重新锚定 |
 | `Home`（右）/ `Capture`（左） | 平滑返回 Home 位姿 |
 | `+`（右）/ `-`（左） | 重新标定 IMU |
-
 

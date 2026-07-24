@@ -2,12 +2,13 @@
 
 import math
 import time
-from glm import vec3, quat, angleAxis
+from glm import vec3
 
 from .joycon import JoyCon
 from .gyro import GyroTrackingJoyCon
 from .event import ButtonEventJoyCon
 from .device import get_R_id, get_L_id
+from .attitude import MahonyAttitudeEstimator
 
 from scipy.spatial.transform import Rotation as R
 import numpy as np
@@ -16,127 +17,34 @@ import logging
 
 JOYCON_SERIAL_SUPPORT = '9c:54:'
 
-class LowPassFilter:
-    def __init__(self, alpha=0.1):
-        self.alpha = alpha
-        self.prev_value = 0.0
 
-    def update(self, new_value):
-        self.prev_value = self.alpha * new_value + (1 - self.alpha) * self.prev_value
-        return self.prev_value
-    
-class AttitudeEstimator:
-    def __init__(self, 
-                pitch_Threhold = -1, 
-                roll_Threhold = -1, 
-                yaw_Threhold = -1, 
-                common_rad = True,
-                lerobot = False,
-                pitch_down_double = False,
-                lowpassfilter_alpha_rate = 0.05
-                ):
-        self.pitch = 0.0 
-        self.roll = 0.0   
-        self.yaw = 0.0   
-        self.dt = 0.01  
-        self.alpha = 0.55
-        
-        self.yaw_diff = 0.0
-        self.pitch_rad_T = pitch_Threhold
-        self.roll_rad_T = roll_Threhold
-        self.yaw_rad_T = yaw_Threhold
-        
-        self.common_rad = common_rad
-        self.lerobot = lerobot
-        self.pitch_down_double = pitch_down_double
-        
-        self.direction_X = vec3(1, 0, 0)
-        self.direction_Y = vec3(0, 1, 0)
-        self.direction_Z = vec3(0, 0, 1)
-        self.direction_Q = quat()
-        
-        self.lowpassfilter_alpha = 0.05 * lowpassfilter_alpha_rate# lerobot-plus 0.1
-        if self.lerobot:
-            self.lowpassfilter_alpha = 0.08 * lowpassfilter_alpha_rate
-            
-        self.lpf_roll = LowPassFilter(alpha=self.lowpassfilter_alpha)   # lerobot real 
-        self.lpf_pitch = LowPassFilter(alpha=self.lowpassfilter_alpha)  # lerobot real 
-    
-    def reset_yaw(self):
-        self.direction_X = vec3(1, 0, 0)
-        self.direction_Y = vec3(0, 1, 0)
-        self.direction_Z = vec3(0, 0, 1)
-        self.direction_Q = quat()
-    
-    def set_yaw_diff(self,data):
-        self.yaw_diff = data
-        
-    def update(self, gyro_in_rad, accel_in_g):
-        self.pitch = 0.0 
-        self.roll = 0.0   
-        
-        ax, ay, az = accel_in_g
-        ax = ax * math.pi
-        ay = ay * math.pi
-        az = az * math.pi
-        
-        gx, gy, gz = gyro_in_rad
+def controller_translation_vectors(
+        roll, pitch, yaw, planar_stick_translation=False):
+    """Return controller-relative forward, right and up translation axes.
 
-        # Calculate the pitch and roll angles provided by the accelerometers
-        roll_acc = math.atan2(ay, -az)
-        pitch_acc = math.atan2(ax, math.sqrt(ay**2 + az**2))
-        
-        # Updating angles with gyroscope data
-        self.pitch += gy * self.dt
-        self.roll -= gx * self.dt
+    A Joy-Con has no absolute position tracking, so its stick synthesizes
+    translation from the measured orientation.  In planar mode only yaw rotates
+    the stick basis: pitch and roll must not leak into the world-Z command,
+    which is reserved for the dedicated up/down buttons.
+    """
+    if planar_stick_translation:
+        direction_forward = vec3(math.cos(yaw), math.sin(yaw), 0.0)
+        direction_right = vec3(-math.sin(yaw), math.cos(yaw), 0.0)
+    else:
+        direction_forward = vec3(
+            math.cos(pitch) * math.cos(yaw),
+            math.cos(pitch) * math.sin(yaw),
+            math.sin(pitch))
+        direction_right = vec3(
+            math.cos(roll) * math.sin(-yaw),
+            math.cos(roll) * math.cos(-yaw),
+            math.sin(-roll))
 
-        # Complementary filters: weighted fusion of accelerometer and gyroscope data
-        self.pitch = self.alpha * self.pitch + (1 - self.alpha) * pitch_acc
-        self.roll = self.alpha * self.roll + (1 - self.alpha) * roll_acc
-        
-        # The final output roll and pitch angles are then low-pass filtered
-        self.pitch = self.lpf_pitch.update(self.pitch)
-        self.roll = self.lpf_roll.update(self.roll)
-        
-        # Yaw angle (updated by gyroscope)
-        rotation = angleAxis(gx * (-1/86), self.direction_X) \
-            * angleAxis(gy * (-1/86), self.direction_Y) \
-            * angleAxis(gz * (-1/86), self.direction_Z)
-
-        self.direction_X *= rotation
-        self.direction_Y *= rotation
-        self.direction_Z *= rotation
-        self.direction_Q *= rotation        
-        
-        self.yaw = self.direction_X[1]
-        
-        if self.common_rad:
-            self.roll = self.roll * math.pi/1.5
-            self.pitch = self.pitch * math.pi/1.5
-            self.yaw = -self.yaw * math.pi/1.5 # * 10.0
-            
-        else:
-            self.yaw = -self.yaw * math.pi/2  
-            
-        if self.pitch_down_double:
-            self.pitch = self.pitch * 3.0 if self.pitch < 0 else self.pitch
-        if self.lerobot:
-            self.roll = self.roll * math.pi/2
-            # self.yaw = -self.yaw * math.pi/1.5 # * 10.0      
-        self.yaw = self.yaw - self.yaw_diff    
-        
-        if self.pitch_rad_T != -1:
-            self.pitch = self.pitch_rad_T if self.pitch > self.pitch_rad_T else (-self.pitch_rad_T if self.pitch < -self.pitch_rad_T else self.pitch) 
-        
-        if self.roll_rad_T != -1:
-            self.roll = self.roll_rad_T if self.roll > self.roll_rad_T else (-self.roll_rad_T if self.roll < -self.roll_rad_T else self.roll) 
-        
-        if self.yaw_rad_T != -1:
-            self.yaw = self.yaw_rad_T if self.yaw > self.yaw_rad_T else (-self.yaw_rad_T if self.yaw < -self.yaw_rad_T else self.yaw) 
-        
-        orientation = [self.roll, self.pitch, self.yaw]
-        # Return roll angle, pitch angle, yaw angle (in radians)
-        return orientation
+    direction_up = vec3(
+        math.sin(-roll) * math.sin(-pitch),
+        math.sin(-roll) * math.cos(-pitch),
+        math.cos(-roll))
+    return direction_forward, direction_right, direction_up
 
 
 class JoyconRobotics:
@@ -163,9 +71,13 @@ class JoyconRobotics:
                  pure_z: bool = True,
                  change_down_to_gripper: bool = False, # ZR to toggle gripper state is common for lerobot, ARX ARM and VixperX. But for UR, Sawyer and panda you could try this. ZR to go down and stick button to toggle gripper
                  lowpassfilter_alpha_rate = 0.05,
+                 attitude_filter_kp: float = 2.5,
+                 attitude_filter_ki: float = 0.05,
+                 attitude_accel_rejection: float = 0.25,
                  pure_dx = True,
                  all_button_return = False,
-                 enable_shoulder_translation = True
+                 enable_shoulder_translation = True,
+                 planar_stick_translation: bool = False
                  ):
         
         if device == "right":
@@ -192,7 +104,15 @@ class JoyconRobotics:
         self.lerobot = lerobot
         self.pitch_down_double = pitch_down_double
         self.rotation_filter_alpha_rate = rotation_filter_alpha_rate
-        self.orientation_sensor = AttitudeEstimator(common_rad=common_rad, lerobot=self.lerobot, pitch_down_double = self.pitch_down_double, lowpassfilter_alpha_rate = self.rotation_filter_alpha_rate, ) # roll_Threhold=glimit[0][3], pitch_Threhold=glimit[0][4], yaw_Threhold=glimit[0][5] 
+        # A report contains three IMU samples over the nominal 15 ms report
+        # period. Fuse them in the report callback so no sample is integrated
+        # twice when the application loop runs faster than HID reports arrive.
+        self.orientation_sensor = MahonyAttitudeEstimator(
+            sample_period=self.gyro._INPUT_REPORT_PERIOD / 3.0,
+            proportional_gain=attitude_filter_kp,
+            integral_gain=attitude_filter_ki,
+            accel_rejection=attitude_accel_rejection)
+        self.gyro.register_update_hook(self._attitude_update_hook)
         self.button = ButtonEventJoyCon(*self.joycon_id, track_sticks=True)
         self.without_rest_init = without_rest_init
         # print(f"connect to {device} joycon successful.")
@@ -238,6 +158,7 @@ class JoyconRobotics:
         self.joycon_button_zrl = 0
         self.all_button_return = all_button_return
         self.enable_shoulder_translation = enable_shoulder_translation
+        self.planar_stick_translation = bool(planar_stick_translation)
         
         self.button_control = 0
         
@@ -251,6 +172,16 @@ class JoyconRobotics:
         
     def disconnnect(self):
         self.joycon._close()
+
+    def _attitude_update_hook(self, gyro):
+        """Fuse each new HID report exactly once on the IMU reader thread."""
+        if gyro.is_calibrating:
+            return
+        sample_period = gyro._INPUT_REPORT_PERIOD / 3.0
+        for angular_velocity, acceleration in zip(
+                gyro.gyro_in_rad, gyro.accel_in_g):
+            self.orientation_sensor.update(
+                angular_velocity, acceleration, dt=sample_period)
     
     def reset_joycon(self):
         
@@ -258,8 +189,8 @@ class JoyconRobotics:
 
         self.gyro.calibrate()
         time.sleep(2)
-        self.gyro.reset_orientation
-        self.orientation_sensor.reset_yaw()
+        self.gyro.reset_orientation()
+        self.orientation_sensor.reset()
 
         print(f"\033[32mJoycon calibrations is complete.\033[0m")
     
@@ -437,7 +368,13 @@ class JoyconRobotics:
                         
                         
     def get_orientation(self): # euler_rad, euler_deg, quaternion,
-        self.orientation_rad = self.orientation_sensor.update(self.gyro.gyro_in_rad[0], self.gyro.accel_in_g[0])
+        # The estimator is updated by the HID report callback. Reading a
+        # snapshot here avoids integrating the same sample multiple times.
+        self.orientation_rad = self.orientation_sensor.get_euler()
+        if self.pitch_down_double and self.orientation_rad[1] < 0.0:
+            self.orientation_rad[1] *= 3.0
+        if self.lerobot:
+            self.orientation_rad[0] *= math.pi / 2.0
         
         roll, pitch, yaw = self.orientation_rad
         # self.direction_vector_right = vec3(math.cos(roll) * math.cos(yaw + math.pi/2 * self.euler_reverse[2]), math.cos(roll) * math.sin(yaw + math.pi/2 * self.euler_reverse[2]), math.sin(roll))
@@ -449,18 +386,10 @@ class JoyconRobotics:
             self.orientation_rad[i] = (self.orientation_rad[i] + self.offset_euler_rad[i]) * self.euler_reverse[i]
             
         roll, pitch, yaw = self.orientation_rad
-        # self.direction_vector = vec3(math.cos(pitch) * math.cos(yaw), math.cos(pitch) * math.sin(yaw), math.sin(pitch))
-        self.direction_vector = vec3(math.cos(pitch) * math.cos(yaw), 
-                                     math.cos(pitch) * math.sin(yaw), 
-                                     math.sin(pitch))
-                                     
-        self.direction_vector_right = vec3(math.cos(roll) * math.sin(-yaw), 
-                                           math.cos(roll) * math.cos(-yaw), 
-                                           math.sin(-roll))
-        
-        self.direction_vector_up = vec3(math.sin(-roll) * math.sin(-pitch), 
-                                        math.sin(-roll) * math.cos(-pitch), 
-                                        math.cos(-roll))
+        (self.direction_vector,
+         self.direction_vector_right,
+         self.direction_vector_up) = controller_translation_vectors(
+             roll, pitch, yaw, self.planar_stick_translation)
             
         if self.if_limit_dof:
             self.check_limits_orientation()

@@ -71,12 +71,12 @@ class GyroTrackingJoyCon(PythonicJoyCon):
                     self.calibration_acumulator += xyz
                 self.calibration_acumulations += 3
 
+        sample_period = self._INPUT_REPORT_PERIOD / 3.0
         for gx, gy, gz in self.gyro_in_rad:
-            # TODO: find out why 1/86 works, and not 1/60 or 1/(60*30)
             rotation \
-                = angleAxis(gx * (-1/86), self.direction_X) \
-                * angleAxis(gy * (-1/86), self.direction_Y) \
-                * angleAxis(gz * (-1/86), self.direction_Z)
+                = angleAxis(gx * -sample_period, self.direction_X) \
+                * angleAxis(gy * -sample_period, self.direction_Y) \
+                * angleAxis(gz * -sample_period, self.direction_Z)
 
             self.direction_X *= rotation
             self.direction_Y *= rotation

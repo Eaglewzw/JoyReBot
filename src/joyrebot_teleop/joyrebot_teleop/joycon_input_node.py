@@ -22,6 +22,10 @@ class JoyconInput(Node):
         self.declare_parameter("terminal_display", True)
         self.declare_parameter("display_rate", 30.0)
         self.declare_parameter("rescan_rate", 2.0)
+        self.declare_parameter("planar_stick_translation", True)
+        self.declare_parameter("attitude_filter_kp", 2.5)
+        self.declare_parameter("attitude_filter_ki", 0.05)
+        self.declare_parameter("attitude_accel_rejection", 0.25)
         self.pose_pub = self.create_publisher(PoseStamped, "~/pose", 10)
         self.gripper_pub = self.create_publisher(Float64, "~/gripper", 10)
         self.reset_pub = self.create_publisher(Bool, "~/reset", 10)
@@ -66,6 +70,14 @@ class JoyconInput(Node):
                 gripper_open=1.0,
                 gripper_close=0.0,
                 enable_shoulder_translation=True,
+                planar_stick_translation=bool(
+                    self.get_parameter("planar_stick_translation").value),
+                attitude_filter_kp=float(
+                    self.get_parameter("attitude_filter_kp").value),
+                attitude_filter_ki=float(
+                    self.get_parameter("attitude_filter_ki").value),
+                attitude_accel_rejection=float(
+                    self.get_parameter("attitude_accel_rejection").value),
             )
             self.monitors[side] = controller
             self.get_logger().info(f"{side.capitalize()} Joy-Con connected")

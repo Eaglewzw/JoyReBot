@@ -6,6 +6,10 @@ build/
 install/
 log/
 
+# Runtime teleop logs
+teleop_logs/
+joint_teleop_logs/
+
 # Python
 __pycache__/
 *.pyc

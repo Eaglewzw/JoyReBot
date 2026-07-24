@@ -32,7 +32,7 @@ Joy-Con IMU、摇杆、按键
           │
           ├── 相对位姿映射
           ├── 工作空间约束
-          ├── URDF 正运动学和数值 IK
+          ├── URDF 正运动学和 QP/DLS IK
           ├── 关节限位和速度限制
           └── 超时及 IK 失败保护
           │
@@ -55,16 +55,36 @@ Joy-Con IMU、摇杆、按键
 | Joy-Con 操作 | 功能 |
 |---|---|
 | 转动手柄 | 控制末端 roll、pitch、yaw |
-| 摇杆前后 | 控制末端沿手柄指向前后移动 |
-| 摇杆左右 | 控制末端横向移动 |
+| 摇杆前后 | 在水平面内沿手柄 yaw 指向前后移动 |
+| 摇杆左右 | 在水平面内沿手柄 yaw 横向移动 |
 | 按下摇杆 | 末端下降 |
 | `R` / `L` | 末端上升 |
 | `ZR` / `ZL` | 切换夹爪打开/关闭 |
 | `+` | 重新执行 Joy-Con 静止标定 |
 | `Home` | 平滑返回启动时的关节位置；左手柄回退控制时使用 `Capture` |
 
-Joy-Con 启动标定时应水平静置约两秒。实际按键及摇杆位移的生成逻辑来自内置的
-`joyconrobotics` 库。
+Joy-Con 启动标定时应水平静置约两秒。姿态由六轴 Mahony 四元数滤波器计算：
+陀螺仪负责连续旋转积分，加速度计的重力方向修正 roll/pitch。Joy-Con 没有磁力计，
+因此 yaw 没有绝对航向参考，仍可能随陀螺零偏缓慢漂移；按 `+` 重新静止标定可清零。
+滤波器直接输出真实弧度，不再使用原实现中旋转后 X 轴的单个分量近似 yaw，也不再做
+额外的 `π/1.5` 非线性放大。
+
+滤波参数如下。`attitude_filter_kp` 越大，roll/pitch 回到重力参考的速度越快；
+`attitude_filter_ki` 用于缓慢补偿横滚/俯仰陀螺零偏。快速平移时加速度模长偏离 1 g，
+超过 `attitude_accel_rejection` 的样本不会被误当成倾斜：
+
+```yaml
+attitude_filter_kp: 2.5
+attitude_filter_ki: 0.05
+attitude_accel_rejection: 0.25
+planar_stick_translation: true
+```
+
+`planar_stick_translation` 默认开启：摇杆平移方向只随 yaw 旋转，手柄的
+pitch/roll 不会再让摇杆命令混入 Z 分量。世界 Z 方向只由 `R`/`L`
+上升键和摇杆按下降低键控制。关闭该参数可恢复 vendor 库原有的三维指向平移。
+
+实际按键及摇杆位移的生成逻辑来自内置的 `joyconrobotics` 库。
 
 输入节点默认以 30 Hz 在终端打印左右手柄状态面板，内容包括当前按键、左右摇杆原始值、
 roll/pitch/yaw、控制位置及电池状态。当前未连接的一侧显示“未连接”。可以通过以下参数
@@ -147,7 +167,7 @@ position_axis_map: [1, 0, 2]
 
 `position_scale` 和 `orientation_scale` 越小，机械臂对手柄运动越不敏感，适合精细操作。
 `orientation_limit` 以弧度限制接合后末端相对姿态的旋转向量分量，当前分别约为
-Roll ±69°、Pitch ±11.5°、Yaw ±43°，用于减少手柄姿态进入 IK 不可达区域的概率。
+Roll ±120°、Pitch ±13°、Yaw ±49°，用于减少手柄姿态进入 IK 不可达区域的概率。
 
 ## 5. 运动学和 IK 原理
 
@@ -170,22 +190,61 @@ base_link → joint1 → joint2 → joint3 → joint4
 T_end = T1(q1) × T2(q2) × ... × T6(q6) × T_tool
 ```
 
-### 逆运动学
+### QP + IK（默认）
 
-控制器使用阻尼最小二乘法求解 IK。每次迭代先计算当前末端与目标末端的六维误差：
+默认的 `ik_solver: placo` 使用 PlaCo 构造速度级增量 QP。设计参考
+[XRoboToolkit Teleop Sample](https://github.com/XR-Robotics/XRoboToolkit-Teleop-Sample-Python)，
+并针对 B601-RS 这台非冗余六轴机械臂做了以下适配：
+
+- 固定浮动基座，禁止 QP 通过移动整台机器人“完成”末端任务；
+- 把 `joint_margin` 后的软限位直接写入 PlaCo 模型，作为 QP 硬约束；
+- 用 `max_joint_speed` 覆盖 URDF 中偏大的模型速度值，作为 QP 硬约束；
+- 每个控制周期只推进一个增量 IK 周期，避免重复求解放大允许的运动量；
+- 位置和姿态使用独立权重；默认位置权重远高于姿态，转腕时优先锁住 TCP 位置；
+- 保留低层发布前的限位检查，拒绝非有限、越界或求解异常的结果。
+
+QP 的简化形式为：
 
 ```text
-error = [x, y, z 位置误差, rx, ry, rz 旋转误差]
+min Δq  wp ||Jp Δq - ep||² + wr ||Jr Δq - er||² + ε ||Δq||²
+
+subject to
+  qsoft_min ≤ q + Δq ≤ qsoft_max
+  |Δqi| ≤ max_joint_speed × dt
 ```
 
-通过有限差分计算数值雅可比矩阵，并使用下式求关节增量：
+末端位姿任务是软任务，因此目标暂时不可达时，求解器仍会返回满足关节和速度约束的
+最佳增量，机械臂会移动到最接近的可行姿态，而不是因为未达到误差阈值立即冻结。
+`ik_position_tolerance` 和 `ik_orientation_tolerance` 用于判断目标是否到达和记录诊断，
+不用于放行不安全结果。
+
+```yaml
+ik_position_weight: 100.0
+ik_orientation_weight: 0.35
+ik_manipulability_weight: 0.0
+ik_qp_substeps: 1
+```
+
+默认 `100:0.35` 的位置/姿态权重比是有意设置的：当大姿态指令与单周期关节速度约束
+冲突时，QP 会先把速度预算用于保持末端位置，再以剩余能力追踪姿态。Home 位姿下施加
+49° 的突发 yaw 数值压力测试中，原 `1:0.35` 权重的最大位置漂移约 17.8 cm，当前权重
+约 0.9 cm。姿态到达速度会相应降低，这是防止末端大幅扫动所需的安全取舍。
+
+`ik_qp_substeps` 可用于一次控制周期内多次重新线性化。设置为 `N` 时，每个子步使用
+`dt/N`，所以总速度边界不会放大。B601-RS 是 6 自由度机械臂，完整 6D 末端任务没有
+可供次级目标使用的零空间，因此 manipulability 默认关闭；盲目采用参考项目中的
+`1e-2` 权重会与末端位姿竞争并产生漂移。
+
+### DLS 备用后端
+
+把 `ik_solver` 改为 `dls` 可使用内置阻尼最小二乘后端。它通过有限差分雅可比求解：
 
 ```text
 Δq = Jᵀ (J Jᵀ + λ²I)⁻¹ error
 ```
 
-其中 `λ` 是阻尼系数，用于降低奇异点附近的数值不稳定。上一周期的关节命令会作为
-下一次 IK 的初值，使解保持连续，减少机械臂突然切换到另一组关节解的风险。
+其中 `λ` 是 `ik_damping`，用于降低奇异点附近的数值不稳定。上一周期关节命令会作为
+下一次求解的初值，使解保持连续。`ik_max_iterations` 只对 DLS 生效。
 
 ## 6. 关节命令
 
@@ -213,7 +272,7 @@ IK 成功后，控制节点向机械臂控制后端发布：
 
 ```yaml
 workspace_min: [-0.55, -0.55, -0.05]
-workspace_max: [0.55, 0.55, 0.70]
+workspace_max: [0.70, 0.55, 0.70]
 ```
 
 ### 关节软限位
@@ -236,7 +295,7 @@ move_home_on_startup: true
 
 ### 关节速度限制
 
-每周期允许的最大关节变化为：
+PlaCo QP 内部和发布前安全层都会限制每周期最大关节变化：
 
 ```text
 最大单步变化 = max_joint_speed × 控制周期
@@ -255,8 +314,9 @@ input_timeout: 0.30
 
 ### IK 失败保护
 
-当目标不可达、IK 未收敛或结果包含非法数值时，本次结果不会发送，机械臂保持上一条
-合法命令。
+PlaCo 的末端任务为软任务：不可达目标会被渐进逼近到最近可行姿态。只有 QP 抛出异常、
+返回非法数值、越过软关节限位或越过速度边界时，本次结果才会被拒绝，机械臂保持上一条
+合法命令。数据日志中的 `tracking_limited` 表示目标尚未达到且至少一个关节已到软限位。
 
 ## 8. 夹爪控制
 
@@ -286,7 +346,7 @@ gripper_open: 0.05
 - `/joint_states` 的 joint1～joint6 实际反馈；
 - 本周期 IK 求出的 joint1～joint6；
 - 限速后实际发布的 joint1～joint6 命令及单周期变化量；
-- IK 成功状态、控制状态、输入延迟和夹爪命令。
+- IK/QP 有效性、目标是否到达、位置/姿态残差、限位状态、控制状态、输入延迟和夹爪命令。
 
 相关参数：
 
@@ -311,7 +371,20 @@ colcon build --symlink-install \
 source install/setup.bash
 ```
 
-Python 运行依赖包括 NumPy、SciPy、`hidapi` 和 `PyGLM`。Joy-Con 的 Linux
+Python 运行依赖包括 NumPy、SciPy、`hidapi` 和 `PyGLM`。使用默认 QP 后端还需要：
+
+```bash
+python3 -m pip install \
+  'scipy>=1.15.3,<1.16' \
+  'placo>=0.9.23,<0.10'
+```
+
+PlaCo 0.9.23 会安装 NumPy 2.x；Ubuntu 22.04 自带的 SciPy 1.8 与 NumPy 2.x
+二进制不兼容，因此必须同时安装上述新版 SciPy。安装时出现其他应用缺少
+`huggingface-hub`、`transformers` 或 `tqdm` 的提示与本节点无关，不需要为了遥操作
+额外安装这些模型工具。
+
+如果运行环境不能安装 PlaCo，可把 `ik_solver` 改为 `dls`。Joy-Con 的 Linux
 内核驱动、蓝牙配对和 udev 权限属于操作系统配置，无法通过 Python 源码内置。
 
 ## 11. 使用真实 Joy-Con
@@ -353,9 +426,12 @@ joyrebot_teleop/
 ├── joyrebot_teleop/
 │   ├── joycon_input_node.py            Joy-Con ROS 输入适配
 │   ├── teleop_controller.py            IK、安全和关节命令节点
+│   ├── placo_solver.py                 受限增量 QP IK 后端
 │   ├── pose_mapping.py                 相对位姿及坐标映射
 │   ├── kinematics.py                   URDF 正运动学与数值 IK
-│   └── vendor/joyconrobotics/          内置 Joy-Con 运行时库
+│   └── vendor/joyconrobotics/
+│       ├── attitude.py                 Mahony 四元数姿态滤波
+│       └── ...                         内置 Joy-Con 运行时库
 ├── test/                               运动学和映射单元测试
 └── THIRD_PARTY_NOTICES.md              第三方代码许可证
 ```

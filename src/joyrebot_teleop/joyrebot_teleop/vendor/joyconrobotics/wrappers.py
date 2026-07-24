@@ -117,7 +117,10 @@ class PythonicJoyCon(JoyCon):
 
     @property
     def gyro_in_rad(self):
-        c = 0.0001694 * 3.1415926536
+        # The IMU sensitivity is 0.06103 degrees/s per raw count. The previous
+        # rotations-to-radians conversion used pi instead of 2*pi and therefore
+        # reported exactly half of the physical angular velocity.
+        c = 0.06103 * 3.1415926536 / 180.0
         c2 = c * self._ime_yz_coeff
         return [
             (
