@@ -1,20 +1,17 @@
-"""Anthropomorphic channel mapping: one Joy-Con degree of freedom per arm joint.
+"""拟人化通道映射：Joy-Con 的每个自由度对应机械臂的一个关节。
 
-The Joy-Con offers exactly as many independent channels as the arm has joints --
-three IMU rotations, two stick axes and one button pair -- so every joint can be
-driven at once without any mode switching, the way a hand moves.
+Joy-Con 提供的独立通道数量恰好等于机械臂关节数：三个 IMU 旋转、两个摇杆轴和一对
+按键。因此无需切换模式，六个关节即可像人手一样同时受控。
 
-Each channel carries its own semantics:
+每个通道具有独立语义：
 
 ``absolute``
-    The joint follows the channel one-to-one from the anchor captured on engage.
-    Correct for roll and pitch, which the IMU references against gravity.
+    关节从接合时捕获的锚点开始一对一跟随通道，适用于以重力为参考的 roll 和 pitch。
 ``rate``
-    The channel commands a joint velocity. Correct for yaw, which has no absolute
-    reference and would otherwise drift the joint on its own, and for the
-    self-centring stick and button channels.
+    通道控制关节速度，适用于没有绝对参考、否则会自行漂移的 yaw，以及会自动回中的
+    摇杆和按键通道。
 ``off``
-    Channel ignored; the joint holds.
+    忽略该通道，关节保持当前位置。
 """
 
 import numpy as np
@@ -25,12 +22,12 @@ RATE = "rate"
 OFF = "off"
 MODES = (ABSOLUTE, RATE, OFF)
 
-# Fixed channel order. Everything configurable is a parallel array in this order.
+# 固定通道顺序；所有可配置数组均按此顺序逐项对应。
 CHANNEL_NAMES = ("roll", "pitch", "yaw", "stick_vertical", "stick_horizontal", "buttons")
 
 
 def deadzone(value, width):
-    """Suppress noise around neutral and rescale so the edge stays continuous."""
+    """抑制中位附近的噪声，并保持死区边界处的输出连续。"""
     magnitude = abs(float(value))
     if magnitude <= width:
         return 0.0
@@ -38,7 +35,7 @@ def deadzone(value, width):
 
 
 class AnthropomorphicMap:
-    """Bind the six Joy-Con channels to six joints and resolve one control cycle."""
+    """将六个 Joy-Con 通道绑定到六个关节，并计算一个控制周期的目标。"""
 
     def __init__(self, joints, modes, scales, signs, deadzones, joint_count):
         arrays = (joints, modes, scales, signs, deadzones)
@@ -66,10 +63,9 @@ class AnthropomorphicMap:
         return self.anchor_inputs is not None
 
     def engage(self, inputs, command):
-        """Pin the absolute channels to the operator's current wrist pose.
+        """将绝对通道固定在操作者当前的手腕姿态。
 
-        Called on startup and every time the clutch is released, so that letting
-        go of the clutch never steps the arm.
+        启动时及每次松开离合时调用，确保松开离合不会使机械臂发生跳变。
         """
         self.anchor_inputs = np.asarray(inputs, dtype=float).copy()
         self.anchor_command = np.asarray(command, dtype=float).copy()
@@ -78,7 +74,7 @@ class AnthropomorphicMap:
         self.anchor_inputs = self.anchor_command = None
 
     def target(self, inputs, command, dt):
-        """Desired joint command for this cycle, before rate limiting and clamping."""
+        """计算本周期的期望关节命令，尚未执行限速和限位裁剪。"""
         if not self.engaged:
             raise RuntimeError("anthropomorphic map is not engaged")
         inputs = np.asarray(inputs, dtype=float)
@@ -90,22 +86,21 @@ class AnthropomorphicMap:
             delta = float(inputs[index] - self.anchor_inputs[index])
             gain = self.signs[index] * self.scales[index]
             if mode == ABSOLUTE:
-                # Absolute channels stay tied to the anchor, so drift in the joint
-                # command cannot accumulate cycle over cycle.
+                # 绝对通道始终以锚点为基准，关节命令不会在控制周期之间累计漂移。
                 target[joint] = self.anchor_command[joint] + gain * delta
             else:
                 target[joint] = command[joint] + gain * deadzone(delta, self.deadzones[index]) * dt
         return target
 
     def absolute_joints(self):
-        """Joints driven one-to-one; the display marks these differently."""
+        """返回一对一控制的关节集合，供终端面板作区别标记。"""
         return {joint for joint, mode in zip(self.joints, self.modes) if mode == ABSOLUTE}
 
 
 def rate_limit(command, target, max_step):
-    """Never let a single cycle move a joint further than the speed limit allows.
+    """限制单周期关节变化量，使其不超过允许的速度上限。
 
-    This is what keeps an IMU glitch on an absolute channel from slamming a joint.
+    即使绝对通道的 IMU 出现异常跳变，也不会让关节在一个控制周期内猛烈运动。
     """
     command = np.asarray(command, dtype=float)
     difference = np.asarray(target, dtype=float) - command
@@ -113,5 +108,5 @@ def rate_limit(command, target, max_step):
 
 
 def button_axis(positive, negative):
-    """Two buttons acting as one signed channel."""
+    """将一对按键组合成一个带正负方向的控制通道。"""
     return float(bool(positive)) - float(bool(negative))

@@ -12,8 +12,8 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
-  <!-- Reuses the vendored joyconrobotics HID driver, the URDF joint limits and
-       the SerialChain parser from joyrebot_teleop. -->
+  <!-- 复用 joyrebot_teleop 中内置的 joyconrobotics HID 驱动、URDF 关节限位和
+       SerialChain 解析器。 -->
   <exec_depend>joyrebot_teleop</exec_depend>
   <test_depend>python3-pytest</test_depend>
 

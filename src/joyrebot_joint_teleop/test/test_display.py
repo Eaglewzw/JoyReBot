@@ -28,10 +28,10 @@ def test_limit_headroom_reports_nearer_limit():
     {},
     {"status": "clutch(冻结)", "side": "未连接", "battery": None},
     {"inputs": np.array([-1.5, 1.5, -3.0, -1.0, 1.0, -1.0])},
-    {"command": np.array([-2.78, 3.12, 3.12, 1.55, -1.55, -3.12])},   # hard against limits
+    {"command": np.array([-2.78, 3.12, 3.12, 1.55, -1.55, -3.12])},   # 紧贴关节限位
 ])
 def test_every_row_is_exactly_the_box_width(overrides):
-    """CJK glyphs are two cells wide; a miscount visibly tears the box."""
+    """CJK 字符占两个单元格；宽度计算错误会让边框明显错位。"""
     for line in render(snapshot(**overrides)).split("\n"):
         assert _display_width(line) == WIDTH + 2, line
 

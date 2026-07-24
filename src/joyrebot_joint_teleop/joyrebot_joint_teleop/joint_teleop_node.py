@@ -1,19 +1,16 @@
-"""Anthropomorphic joint-space Joy-Con control.
+"""拟人化关节空间 Joy-Con 控制。
 
-All six joints move at once, the way a hand moves. The Joy-Con happens to offer
-exactly six independent channels -- three IMU rotations, two stick axes and one
-button pair -- so every joint gets its own, with no mode switching anywhere.
+六个关节像人手一样同时运动。Joy-Con 恰好提供六个独立通道：三个 IMU 旋转、两个
+摇杆轴和一对按键，因此每个关节都有独立输入，无需切换任何控制模式。
 
-Wrist roll and pitch drive the arm's wrist one-to-one against gravity; yaw, the
-sticks and the button pair command joint velocity.
+手腕 roll 和 pitch 以重力为参考一对一驱动机械臂腕部；yaw、摇杆和按键对则控制
+关节速度。
 
-Runs *instead of* joyrebot_teleop's joycon_input + teleop_controller pair, never
-alongside it: the Joy-Con is an exclusively-owned HID device, and both nodes
-publish the same /rebot/joint*/cmd_pos topics.
+本节点用于替代 `joyrebot_teleop` 的 `joycon_input + teleop_controller` 组合，不能与其
+同时运行：Joy-Con HID 设备只能由一个节点独占，且二者会发布相同的
+`/rebot/joint*/cmd_pos` 话题。
 """
 
-import csv
-from datetime import datetime
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -24,29 +21,15 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64
 
 from joyrebot_teleop.kinematics import SerialChain
-from joyrebot_teleop.vendor.joyconrobotics import JoyconRobotics
 
 from .anthropomorphic import CHANNEL_NAMES, AnthropomorphicMap, button_axis, rate_limit
-from .device_input import normalize_axis, report_is_ready
+from .joint_data_logger import JointDataLogger
 from .joint_display import print_dashboard
+from .joycon_session import JoyconSession
 
 
-# Key layout keeps joyrebot_teleop's habits: the trigger is still the gripper and
-# Home/Capture still returns to the startup pose. Plus/Minus is left alone because
-# the vendored driver binds it to a two-second IMU recalibration.
-SIDE_BINDINGS = {
-    "right": {
-        "gripper": "get_button_zr", "shoulder": "get_button_r", "stick_press": "get_button_r_stick",
-        "clutch": "get_button_b", "reanchor": "get_button_x", "home": "get_button_home",
-        "stick": ("get_stick_right_horizontal", "get_stick_right_vertical"),
-    },
-    "left": {
-        "gripper": "get_button_zl", "shoulder": "get_button_l", "stick_press": "get_button_l_stick",
-        "clutch": "get_button_down", "reanchor": "get_button_up", "home": "get_button_capture",
-        "stick": ("get_stick_left_horizontal", "get_stick_left_vertical"),
-    },
-}
-BUTTON_KEYS = ("gripper", "shoulder", "stick_press", "clutch", "reanchor", "home")
+# 保持 joyrebot_teleop 的按键习惯：扳机仍控制夹爪，Home/Capture 仍返回启动姿态。
+# 不绑定 Plus/Minus，因为 vendor 驱动会将其用于约两秒的 IMU 重新标定。
 EDGE_BUTTONS = ("gripper", "reanchor", "home")
 
 
@@ -59,18 +42,17 @@ class JointTeleop(Node):
             "control_rate": 60.0, "input_timeout": 0.30,
             "display_rate": 10.0, "rescan_rate": 2.0, "terminal_display": True,
             "stick_center": 2048.0, "stick_half_range": 1400.0,
-            # vertical = 摇杆前后 -> joint2; horizontal = 摇杆左右 -> joint5
+            # vertical = 摇杆前后 -> joint2；horizontal = 摇杆左右 -> joint5。
             "stick_horizontal_sign": -1.0, "stick_vertical_sign": 1.0,
-            # Channels, in the fixed order
-            # (roll, pitch, yaw, stick_vertical, stick_horizontal, buttons),
-            # each bound to one joint index:
-            #   roll  -> joint6 末端旋转     pitch -> joint4 腕俯仰
-            #   yaw   -> joint1 底座回转     摇杆垂直 -> joint2 大臂
-            #   摇杆水平 -> joint5 腕滚转    R/摇杆按下 -> joint3 小臂
+            # 通道固定顺序为 (roll, pitch, yaw, stick_vertical, stick_horizontal, buttons)，
+            # 每一项绑定一个关节下标：
+            #   roll -> joint6 末端旋转；pitch -> joint4 腕俯仰。
+            #   yaw -> joint1 底座回转；摇杆垂直 -> joint2 大臂。
+            #   摇杆水平 -> joint5 腕滚转；R/摇杆按下 -> joint3 小臂。
             "channel_joint": [5, 3, 0, 1, 4, 2],
             "channel_mode": ["absolute", "absolute", "rate", "rate", "rate", "rate"],
-            # yaw (third entry) is deliberately the least sensitive channel: it has
-            # no absolute reference and drifts, so low gain plus a wide dead zone.
+            # yaw（第三项）刻意设置为最低灵敏度：它没有绝对参考且会漂移，
+            # 因此使用低增益和较宽死区抑制误动作。
             "channel_scale": [0.75, 0.5, 0.35, 0.25, 0.4, 0.25],
             "channel_sign": [1.0, 1.0, -1.0, 1.0, 1.0, 1.0],
             "channel_deadzone": [0.0, 0.0, 0.35, 0.15, 0.15, 0.0],
@@ -108,11 +90,12 @@ class JointTeleop(Node):
         self.gripper_pub = self.create_publisher(Float64, "/rebot/gripper/cmd_pos", 10)
         self.create_subscription(JointState, "/joint_states", self.on_joint_state, 10)
 
-        self.controller = None
-        self.side = None
+        self.session = JoyconSession(
+            param("input_timeout"), param("stick_center"), param("stick_half_range"),
+            param("stick_horizontal_sign"), param("stick_vertical_sign"),
+            info=self.get_logger().info, warning=self.get_logger().warning)
+        self.last_connection_generation = self.session.connection_generation
         self.q = self.command = self.home_command = None
-        self.last_report = None
-        self.last_input_time = None
         self.previous = {name: False for name in EDGE_BUTTONS}
         self.returning_home = False
         self.clutch = False
@@ -124,12 +107,11 @@ class JointTeleop(Node):
 
         rate = float(param("control_rate"))
         self.dt = 1.0 / rate
-        self.log_file = None
-        self.log_writer = None
-        self.log_rows_since_flush = 0
-        self.log_flush_every = max(1, int(rate * float(param("data_log_flush_interval"))))
+        self.data_logger = JointDataLogger(
+            param("data_logging"), param("data_log_directory"), rate,
+            param("data_log_flush_interval"), CHANNEL_NAMES, self.JOINT_NAMES)
         self._open_data_log()
-        self.connect(announce_failure=True)
+        self.session.connect(announce_failure=True)
         self.create_timer(self.dt, self.control)
         self.create_timer(1.0 / max(0.2, float(param("rescan_rate"))), self.rescan)
         if bool(param("terminal_display")):
@@ -141,8 +123,7 @@ class JointTeleop(Node):
         self._log_channel_map()
 
     def _log_channel_map(self):
-        """Print the binding once at startup -- 'which stick axis moves which joint'
-        is the single most common source of confusion when tuning directions."""
+        """启动时输出一次通道绑定，便于排查摇杆轴和关节方向配置。"""
         labels = ("手柄roll", "手柄pitch", "手柄yaw", "摇杆前后", "摇杆左右", "R/摇杆按下")
         lines = [
             f"  {label} → {self.JOINT_NAMES[joint]}  ({mode}, scale={scale:g}, sign={sign:+g})"
@@ -152,53 +133,13 @@ class JointTeleop(Node):
         ]
         self.get_logger().info("通道绑定:\n" + "\n".join(lines))
 
-    # ── Joy-Con connection ────────────────────────────────────────────────────
-
-    def connect(self, announce_failure=False):
-        """Right Joy-Con first, left as fallback -- same priority as joyrebot_teleop."""
-        if self.controller is not None:
-            return True
-        for side in ("right", "left"):
-            try:
-                # without_rest_init=False keeps the two-second rest calibration:
-                # the wrist channels read the IMU, so the attitude estimate has to
-                # settle before the first command.
-                self.controller = JoyconRobotics(
-                    side, without_rest_init=False, all_button_return=True,
-                    gripper_open=1.0, gripper_close=0.0, enable_shoulder_translation=True)
-                self.side = side
-                self.last_report = None
-                self.last_input_time = None
-                self.previous = {name: False for name in EDGE_BUTTONS}
-                self.mapper.clear()
-                self.get_logger().info(f"{side.capitalize()} Joy-Con connected")
-                return True
-            except Exception as error:
-                self.controller = None
-                if announce_failure:
-                    self.get_logger().warning(f"{side.capitalize()} Joy-Con unavailable: {error}")
-        if announce_failure:
-            self.get_logger().warning(
-                "No Joy-Con connected. The node keeps running, holds the arm still and rescans.")
-        return False
+    # ── Joy-Con 会话 ──────────────────────────────────────────────────────────
 
     def rescan(self):
-        self.connect()
-
-    def _drop(self):
-        if self.controller is not None:
-            try:
-                self.controller.running = False
-                self.controller.disconnnect()  # vendor spelling
-            except Exception:
-                pass
-        self.controller = None
-        self.side = None
-        self.last_input_time = None
-        self.mapper.clear()
+        self.session.rescan()
 
     def _check_exclusive(self):
-        """One-shot warning if joyrebot_teleop is driving the same command topics."""
+        """一次性检查 joyrebot_teleop 是否正在发布相同的关节命令话题。"""
         self.exclusivity_timer.cancel()
         others = self.count_publishers("/rebot/joint1/cmd_pos") - 1
         if others > 0:
@@ -206,50 +147,28 @@ class JointTeleop(Node):
                 f"{others} other publisher(s) on /rebot/joint1/cmd_pos -- joyrebot_teleop is "
                 "probably running. Two controllers will fight over the arm; stop one of them.")
 
-    # ── Input ─────────────────────────────────────────────────────────────────
+    # ── 输入 ─────────────────────────────────────────────────────────────────
 
     def _poll(self):
-        """Returns (channel inputs, buttons, fresh). Inputs are zeroed unless fresh."""
+        """将一个标准化会话样本适配为映射器固定顺序的六通道输入。"""
+        sample = self.session.poll()
+        if sample.connection_generation != self.last_connection_generation:
+            self.last_connection_generation = sample.connection_generation
+            self.previous = {name: False for name in EDGE_BUTTONS}
+            self.mapper.clear()
         neutral = np.zeros(len(CHANNEL_NAMES))
-        if self.controller is None:
-            return neutral, {}, False
-        bindings = SIDE_BINDINGS[self.side]
-        joycon = self.controller.joycon
-        try:
-            # The vendored driver refreshes this buffer from its own daemon thread;
-            # an unchanged report means the Joy-Con stopped talking to us.
-            report = bytes(joycon._input_report)
-            posture = self.controller.get_control()[0]
-            raw_sticks = tuple(getattr(joycon, name)() for name in bindings["stick"])
-            buttons = {key: bool(getattr(joycon, bindings[key])()) for key in BUTTON_KEYS}
-        except Exception as error:
-            self.get_logger().warning(f"Joy-Con read failed ({error}); dropping the connection")
-            self._drop()
-            return neutral, {}, False
-        if not report_is_ready(report):
-            return neutral, {}, False
-        now = self.get_clock().now()
-        if report != self.last_report:
-            self.last_report = report
-            self.last_input_time = now
-        if ((now - self.last_input_time).nanoseconds * 1e-9
-                > float(self.get_parameter("input_timeout").value)):
-            return neutral, buttons, False
-        self._handle_edges(buttons)
-        center = float(self.get_parameter("stick_center").value)
-        half_range = float(self.get_parameter("stick_half_range").value)
-        signs = (float(self.get_parameter("stick_horizontal_sign").value),
-                 float(self.get_parameter("stick_vertical_sign").value))
-        horizontal, vertical = (normalize_axis(value, center, half_range) * sign
-                                for value, sign in zip(raw_sticks, signs))
-        roll, pitch, yaw = posture[3:6]
-        # Channel order must match anthropomorphic.CHANNEL_NAMES.
-        inputs = np.array([roll, pitch, yaw, vertical, horizontal,
-                           button_axis(buttons["shoulder"], buttons["stick_press"])])
-        return inputs, buttons, True
+        if not sample.fresh:
+            return neutral, sample.buttons or {}, False, sample
+        self._handle_edges(sample.buttons)
+        inputs = np.array([
+            sample.roll, sample.pitch, sample.yaw,
+            sample.stick_vertical, sample.stick_horizontal,
+            button_axis(sample.buttons["shoulder"], sample.buttons["stick_press"]),
+        ])
+        return inputs, sample.buttons, True, sample
 
     def _handle_edges(self, buttons):
-        """Rising-edge actions: gripper toggle, re-anchor, return home."""
+        """处理按键上升沿动作：切换夹爪、重新锚定和返回 Home。"""
         rising = {name: buttons.get(name, False) and not self.previous[name]
                   for name in EDGE_BUTTONS}
         self.previous = {name: buttons.get(name, False) for name in EDGE_BUTTONS}
@@ -286,13 +205,13 @@ class JointTeleop(Node):
         else:
             self.get_logger().info("Joint feedback ready; control enabled")
 
-    # ── Control ───────────────────────────────────────────────────────────────
+    # ── 控制 ─────────────────────────────────────────────────────────────────
 
     def control(self):
         if self.q is None or self.command is None:
             return
         previous_command = self.command.copy()
-        inputs, buttons, fresh = self._poll()
+        inputs, buttons, fresh, sample = self._poll()
         self.inputs = inputs
         self.clutch = bool(buttons.get("clutch")) and fresh
         if self.returning_home:
@@ -304,13 +223,12 @@ class JointTeleop(Node):
                 self.command = self.home_command.copy()
                 self.returning_home = False
                 self.get_logger().info("Home joint positions reached; control resumed")
-        elif self.controller is None:
+        elif not sample.connected:
             self.status = "no_joycon"
         elif not fresh:
             self.status = "input_timeout"
         elif self.clutch:
-            # Dropping the anchor here is what re-engages on release, so the
-            # operator can re-centre their wrist without stepping the arm.
+            # 在此清除锚点，松开离合时会自动重新接合，操作者可回正手腕而不会带动机械臂跳变。
             self.mapper.clear()
             self.status = "clutch"
         else:
@@ -328,15 +246,26 @@ class JointTeleop(Node):
         self.gripper_command = closed + self.gripper * (opened - closed)
         self.gripper_pub.publish(Float64(data=self.gripper_command))
         self.velocity = (self.command - previous_command) / self.dt
-        self._write_data_log(self.command - previous_command)
+        self.data_logger.write(
+            ros_time_s=self.get_clock().now().nanoseconds * 1e-9,
+            status=self.status,
+            clutch=self.clutch,
+            inputs=self.inputs,
+            feedback=self.q,
+            velocity=self.velocity,
+            command=self.command,
+            command_delta=self.command - previous_command,
+            gripper_normalized=self.gripper,
+            gripper_command=self.gripper_command,
+        )
 
-    # ── Display and logging ───────────────────────────────────────────────────
+    # ── 显示和日志 ────────────────────────────────────────────────────────────
 
     def print_status(self):
         if self.command is None:
             return
         print_dashboard({
-            "side": "未连接" if self.side is None else f"{self.side.capitalize()} Joy-Con",
+            "side": "未连接" if self.session.side is None else f"{self.session.side.capitalize()} Joy-Con",
             "status": "clutch(冻结)" if self.clutch else self.status,
             "names": self.JOINT_NAMES,
             "command": self.command,
@@ -345,60 +274,20 @@ class JointTeleop(Node):
             "inputs": self.inputs,
             "gripper": self.gripper,
             "gripper_command": self.gripper_command,
-            "battery": self._battery_level(),
+            "battery": self.session.battery_level(),
         })
 
-    def _battery_level(self):
-        try:
-            return int(self.controller.joycon.get_battery_level())
-        except Exception:
-            return None
-
     def _open_data_log(self):
-        if not bool(self.get_parameter("data_logging").value):
-            return
         try:
-            directory = Path(str(self.get_parameter("data_log_directory").value)).expanduser()
-            directory.mkdir(parents=True, exist_ok=True)
-            path = directory / f"joint_teleop_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            self.log_file = path.open("w", newline="", encoding="utf-8")
-            self.log_writer = csv.writer(self.log_file)
-            columns = ["ros_time_s", "status", "clutch"]
-            columns += [f"input_{name}" for name in CHANNEL_NAMES]
-            for prefix in ("feedback", "velocity", "command", "command_delta"):
-                columns += [f"{prefix}_joint{i}" for i in range(1, 7)]
-            columns += ["gripper_normalized", "gripper_command"]
-            self.log_writer.writerow(columns)
-            self.log_file.flush()
-            self.get_logger().info(f"Joint control data log: {path.resolve()}")
+            path = self.data_logger.open()
+            if path is not None:
+                self.get_logger().info(f"Joint control data log: {path.resolve()}")
         except OSError as error:
-            self.log_file = None
-            self.log_writer = None
             self.get_logger().warning(f"Cannot create joint control data log: {error}")
 
-    def _write_data_log(self, command_delta):
-        if self.log_writer is None:
-            return
-        nan_joints = [float("nan")] * len(self.JOINT_NAMES)
-        row = [self.get_clock().now().nanoseconds * 1e-9, self.status, int(self.clutch)]
-        row += list(self.inputs)
-        row += list(self.q if self.q is not None else nan_joints)
-        row += list(self.velocity)
-        row += list(self.command)
-        row += list(command_delta)
-        row += [self.gripper, self.gripper_command]
-        self.log_writer.writerow(row)
-        self.log_rows_since_flush += 1
-        if self.log_rows_since_flush >= self.log_flush_every:
-            self.log_file.flush()
-            self.log_rows_since_flush = 0
-
     def destroy_node(self):
-        self._drop()
-        if self.log_file is not None:
-            self.log_file.flush()
-            self.log_file.close()
-            self.log_file = None
+        self.session.close()
+        self.data_logger.close()
         return super().destroy_node()
 
 

@@ -1,7 +1,7 @@
-"""Joint-space jogging. Starts one node only.
+"""关节空间遥操启动文件，只启动一个节点。
 
-This replaces joyrebot_teleop's teleop.launch.py -- do not run both, they own the
-same Joy-Con and publish the same /rebot/joint*/cmd_pos topics.
+本启动文件替代 `joyrebot_teleop` 的 `teleop.launch.py`。两者会独占同一个 Joy-Con，
+并发布相同的 `/rebot/joint*/cmd_pos` 话题，因此不能同时运行。
 """
 
 from pathlib import Path

@@ -70,6 +70,10 @@ ros2 launch joyrebot_joint_teleop joint_teleop.launch.py
 
 **上手建议**:先只动手腕(roll/pitch)看 `joint6`/`joint4` 跟随,确认方向对不对;方向反了改 `channel_sign` 对应项为 `-1.0`。熟悉后再加摇杆和按键。
 
+## 手柄输入会话
+
+`joint_teleop_node.py` 只接收标准化的手柄样本并执行关节控制；`joycon_session.py` 独占一个 Joy-Con HID 设备，负责右手柄优先/左手柄回退、摇杆和按键的左右侧绑定、原始报文有效性、输入超时、读取失败后的断连、周期性重连和释放设备。节点不会直接读取 HID 报文或调用 vendor 驱动接口。
+
 ## 控制流程
 
 每个控制周期:
@@ -129,6 +133,16 @@ absolute 通道**绑定在锚点上而非逐周期累加**,所以手腕不动关
 | `command_joint{1..6}` | 发出的关节指令 |
 | `command_delta_joint{1..6}` | 相对上一周期的增量 |
 | `gripper_normalized`, `gripper_command` | 夹爪归一化状态与实际指令(m) |
+
+日志由独立的 `JointDataLogger` 写入，控制节点只提供每周期的控制数据。默认配置为：
+
+```yaml
+data_logging: true
+data_log_directory: joint_teleop_logs
+data_log_flush_interval: 1.0
+```
+
+`data_log_directory` 支持 `~`，相对路径相对于启动命令的当前目录；目录不存在时会自动创建。文件名为 `joint_teleop_YYYYMMDD_HHMMSS.csv`。表头会立刻刷入磁盘，随后按由控制频率换算的约 `data_log_flush_interval` 秒周期刷新；正常退出会刷新并关闭文件。将 `data_logging` 设为 `false` 可完全关闭文件输出。若目录或文件无法创建，节点会输出警告但继续遥操。
 
 ## 灵敏度调节
 
@@ -237,11 +251,12 @@ ros2 run joyrebot_joint_teleop joint_teleop --ros-args \
 cd src/joyrebot_joint_teleop && python3 -m pytest test/ -q
 ```
 
-30 项:
+41 项:
 
 - `test_anthropomorphic.py` —— 锚定无跳变、六个通道各自绑对关节(roll→joint6、按键→joint3、摇杆水平→joint5)、绝对通道一比一跟随且不累积、速度通道积分、死区抑制 yaw 抖动、离合重锚不跳变、限速截断、非法通道配置拒绝
-- `test_device_input.py` —— 摇杆归一化、零报文拒绝
 - `test_display.py` —— 限位余量计算、CJK 宽度下每行严格等宽(错一格整个框会撕裂)、绝对通道标记
+- `test_joint_data_logger.py` —— CSV 表头和行字段顺序、NaN 反馈、刷新周期、关闭和文件创建失败处理
+- `test_joycon_session.py` —— 右优先/左回退、摇杆归一化、零报文保护、超时、读取失败断连和释放设备
 
 > 注意:本工作区的 `colcon test` 对 ament_python 包会走 `setup.py test` 而不是 pytest,
 > 因此报告 `Ran 0 tests`。这对 `joyrebot_teleop` 同样成立,是既有配置问题。
@@ -250,9 +265,8 @@ cd src/joyrebot_joint_teleop && python3 -m pytest test/ -q
 
 | 文件 | 说明 |
 | --- | --- |
-| `joyrebot_joint_teleop/joint_teleop_node.py` | 唯一节点:开手柄、通道映射、发关节指令、记日志 |
-| `joyrebot_joint_teleop/anthropomorphic.py` | 通道映射(绝对/速度/锚定/限速),纯逻辑 |
-| `joyrebot_joint_teleop/device_input.py` | 摇杆归一化与报文有效性判断 |
+| `joyrebot_joint_teleop/joint_teleop_node.py` | 唯一 ROS 节点:消费手柄样本、通道映射、发关节指令 |
+| `joyrebot_joint_teleop/joycon_session.py` | Joy-Con 获取、摇杆归一化、报文有效性、超时、断连和重连 |
 | `joyrebot_joint_teleop/joint_display.py` | 终端仪表盘 |
 | `config/joint_teleop.yaml` | 全部参数 |
 | `launch/joint_teleop.launch.py` | 只启动这一个节点 |

@@ -149,26 +149,6 @@ position_axis_map: [1, 0, 2]
 `orientation_limit` 以弧度限制接合后末端相对姿态的旋转向量分量，当前分别约为
 Roll ±69°、Pitch ±11.5°、Yaw ±43°，用于减少手柄姿态进入 IK 不可达区域的概率。
 
-### 坐标轴校准助手
-
-可使用交互式校准节点生成上述四项配置。校准期间不要启动
-`teleop_controller`，以免机械臂跟随尚未校准的输入运动：
-
-```bash
-ros2 launch joyrebot_teleop axis_calibration.launch.py
-```
-
-该专用启动文件不会启动机械臂控制器。节点依次提示六个动作：前两项使用摇杆演示
-末端 `+X/+Y`，第三项按 `R`（左手柄为 `L`）演示 `+Z` 上升，后三项转动手柄
-演示绕 `+X/+Y/+Z` 的旋转。
-
-每项操作均为：先按住 `ZR`（左手柄使用 `ZL`）开始记录，执行单轴动作，先松开
-动作按键或摇杆，最后松开 `ZR/ZL` 完成记录。校准过程中 `ZR/ZL` 只作为录制键，
-不会控制机械臂。完成六项动作后，终端会输出可直接复制到
-`teleop.yaml` 的 `position_axis_map/sign` 和 `orientation_axis_map/sign`。
-
-若动作幅度太小或同一输入轴被重复用于多个输出轴，本次动作会被拒绝并要求重试。
-
 ## 5. 运动学和 IK 原理
 
 `kinematics.py` 从本包自带的 `config/rebot_b601_kinematics.urdf` 自动解析以下
@@ -319,7 +299,7 @@ data_log_flush_interval: 1.0
 `data_log_directory` 为相对路径时，相对于启动命令的当前目录。若不需要记录，可将
 `data_logging` 设置为 `false`。程序每隔 `data_log_flush_interval` 秒刷新文件，并在正常退出时关闭文件。
 
-## 9. 构建
+## 10. 构建
 
 在 JoyReBot 工作区根目录运行：
 
@@ -334,7 +314,7 @@ source install/setup.bash
 Python 运行依赖包括 NumPy、SciPy、`hidapi` 和 `PyGLM`。Joy-Con 的 Linux
 内核驱动、蓝牙配对和 udev 权限属于操作系统配置，无法通过 Python 源码内置。
 
-## 10. 使用真实 Joy-Con
+## 11. 使用真实 Joy-Con
 
 确认 Joy-Con 已配对、驱动和设备权限正常，然后运行：
 
@@ -363,22 +343,6 @@ python3 /home/verser/CPP/JoyReBot/src/joyrebot_teleop/joyrebot_teleop/joycon_inp
 4. 从小幅度动作开始测试各个位置和姿态方向。
 5. 如果方向不符合直觉，停止运行并修改 `teleop.yaml`。
 
-## 11. 无手柄 Mock 测试
-
-```bash
-ros2 launch joyrebot_teleop teleop.launch.py mock:=true
-```
-
-Mock 节点会生成周期性的 X 方向小幅位移，用于验证：
-
-- ROS 2 节点和话题连接；
-- URDF 运动学解析；
-- IK 求解；
-- 关节命令输出；
-- 机械臂控制后端的话题连接。
-
-Mock 模式不代表真实手柄的完整操作行为。
-
 ## 12. 主要文件
 
 ```text
@@ -391,7 +355,6 @@ joyrebot_teleop/
 │   ├── teleop_controller.py            IK、安全和关节命令节点
 │   ├── pose_mapping.py                 相对位姿及坐标映射
 │   ├── kinematics.py                   URDF 正运动学与数值 IK
-│   ├── mock_input_node.py              无手柄测试输入
 │   └── vendor/joyconrobotics/          内置 Joy-Con 运行时库
 ├── test/                               运动学和映射单元测试
 └── THIRD_PARTY_NOTICES.md              第三方代码许可证

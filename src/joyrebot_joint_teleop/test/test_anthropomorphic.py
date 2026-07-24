@@ -5,9 +5,9 @@ from joyrebot_joint_teleop.anthropomorphic import (ABSOLUTE, OFF, RATE, Anthropo
                                                    button_axis, deadzone, rate_limit)
 
 
-# Channel order: roll, pitch, yaw, stick_vertical, stick_horizontal, buttons.
-# roll->joint6(5), pitch->joint4(3), yaw->joint1(0),
-# stick_v->joint2(1), stick_h->joint5(4), buttons->joint3(2)
+# 通道顺序：roll、pitch、yaw、stick_vertical、stick_horizontal、buttons。
+# roll->joint6(5)、pitch->joint4(3)、yaw->joint1(0)，
+# stick_v->joint2(1)、stick_h->joint5(4)、buttons->joint3(2)
 JOINTS = [5, 3, 0, 1, 4, 2]
 MODES = [ABSOLUTE, ABSOLUTE, RATE, RATE, RATE, RATE]
 SCALES = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
@@ -35,7 +35,7 @@ def test_engage_produces_no_step():
     command = np.array([0.0, 0.3, 0.3, 0.0, 0.0, 0.0])
     inputs = [0.2, -0.1, 0.4, 0.0, 0.0, 0.0]
     mapper.engage(inputs, command)
-    # Holding the wrist exactly where it was anchored must leave the arm alone.
+    # 手腕保持在锚定位置时，机械臂必须保持不动。
     assert np.allclose(mapper.target(inputs, command, 1 / 60), command)
 
 
@@ -68,7 +68,7 @@ def test_horizontal_stick_drives_joint5():
 
 
 def test_absolute_channel_is_anchored_not_accumulated():
-    """Holding a constant wrist angle must hold a constant joint angle."""
+    """手腕角度保持不变时，关节角度也必须保持不变。"""
     mapper = build()
     command = np.zeros(6)
     mapper.engage(np.zeros(6), command)
@@ -89,7 +89,7 @@ def test_rate_channel_integrates_over_time():
     mapper = build()
     command = np.zeros(6)
     mapper.engage(np.zeros(6), command)
-    inputs = channel(STICK_V, 0.5)            # stick_vertical -> joint2
+    inputs = channel(STICK_V, 0.5)            # stick_vertical 控制 joint2。
     for _ in range(60):
         command = mapper.target(inputs, command, 1 / 60)
     assert command[1] == pytest.approx(0.5, abs=1e-9)
@@ -127,13 +127,13 @@ def test_absolute_joints_are_reported_for_the_display():
 
 
 def test_reengage_after_clutch_does_not_jump():
-    """Freeze, move the wrist far away, release: the arm must stay put."""
+    """冻结后将手腕移远再松开，机械臂必须保持当前位置。"""
     mapper = build()
     command = np.array([0.0, 0.3, 0.3, 0.0, 0.0, 0.0])
     mapper.engage(np.zeros(6), command)
     command = mapper.target(channel(ROLL, 0.6), command, 1 / 60)
     parked = command.copy()
-    # Clutch held: operator re-centres the wrist, then releases.
+    # 按住离合后，操作者回正手腕，再松开离合。
     mapper.engage(np.zeros(6), command)
     assert np.allclose(mapper.target(np.zeros(6), command, 1 / 60), parked)
 
@@ -163,10 +163,10 @@ def test_target_before_engage_is_refused():
 
 
 @pytest.mark.parametrize("overrides", [
-    {"modes": [ABSOLUTE] * 5},                        # wrong length
-    {"modes": ["sideways"] + MODES[1:]},              # unknown mode
-    {"joints": [9, 3, 0, 1, 4, 2]},                   # out of range
-    {"joints": [5, 5, 0, 1, 4, 2]},                   # two channels, one joint
+    {"modes": [ABSOLUTE] * 5},                        # 长度错误
+    {"modes": ["sideways"] + MODES[1:]},              # 未知模式
+    {"joints": [9, 3, 0, 1, 4, 2]},                   # 超出范围
+    {"joints": [5, 5, 0, 1, 4, 2]},                   # 两个通道控制同一关节
 ])
 def test_invalid_configuration_is_refused(overrides):
     with pytest.raises(ValueError):

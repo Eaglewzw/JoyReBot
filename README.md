@@ -8,7 +8,7 @@
 - Joy-Con 控制机械臂末端位姿和夹爪；
 - 基于 URDF 运动学和数值 IK 的关节位置控制；
 - 工作空间、关节限位、速度限制、输入超时和 IK 失败保护；
-- 无手柄 Mock 测试与关节接口测试。
+- 关节接口测试。
 
 <p align="center">
   <img src="assets/view.png" alt="reBot B601-RS" width="720">
@@ -52,12 +52,6 @@ ros2 launch joyrebot_gazebo_sim sim.launch.py gui:=false
 
 ```bash
 ros2 launch joyrebot_teleop teleop.launch.py
-```
-
-没有真实手柄时，可使用 Mock 输入验证遥操作链路：
-
-```bash
-ros2 launch joyrebot_teleop teleop.launch.py mock:=true
 ```
 
 遥操作会读取 `/joint_states`，并发布 `/rebot/joint1/cmd_pos` 至 `/rebot/joint6/cmd_pos` 以及 `/rebot/gripper/cmd_pos`。关节单位为 rad，夹爪单位为 m。

@@ -23,8 +23,6 @@ class JoyconInput(Node):
         self.declare_parameter("display_rate", 30.0)
         self.declare_parameter("rescan_rate", 2.0)
         self.pose_pub = self.create_publisher(PoseStamped, "~/pose", 10)
-        self.calibration_trigger_pub = self.create_publisher(
-            Bool, "~/calibration_trigger", 10)
         self.gripper_pub = self.create_publisher(Float64, "~/gripper", 10)
         self.reset_pub = self.create_publisher(Bool, "~/reset", 10)
         if __package__:
@@ -107,7 +105,6 @@ class JoyconInput(Node):
         self.previous_gripper_button = gripper_pressed
         self.pose_pub.publish(pose)
         self.gripper_pub.publish(Float64(data=self.gripper_state))
-        self.calibration_trigger_pub.publish(Bool(data=gripper_pressed))
         reset_pressed = (bool(self.controller.joycon.get_button_home())
                          if self.controller.joycon.is_right()
                          else bool(self.controller.joycon.get_button_capture()))

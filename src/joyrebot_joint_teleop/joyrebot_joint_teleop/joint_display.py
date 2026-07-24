@@ -1,4 +1,4 @@
-"""Terminal dashboard for anthropomorphic joint control."""
+"""拟人化关节控制的终端仪表盘。"""
 
 import math
 import unicodedata
@@ -11,14 +11,14 @@ BAR_WIDTH = 13
 
 
 def limit_headroom(position, lower, upper):
-    """Distance to the nearer soft limit for every joint."""
+    """计算每个关节到较近软限位的距离。"""
     position = np.asarray(position, dtype=float)
     return np.minimum(position - np.asarray(lower), np.asarray(upper) - position)
 
 
 def _display_width(text):
-    # Same convention as joyrebot_teleop.terminal_display: W/F CJK glyphs take
-    # two cells, ambiguous characters such as the degree sign take one.
+    # 与 joyrebot_teleop.terminal_display 保持一致：宽字符和全角 CJK 字符占两格，
+    # 度数符号等东亚宽度不确定字符占一格。
     return sum(2 if unicodedata.east_asian_width(char) in ("W", "F") else 1 for char in text)
 
 
@@ -32,7 +32,7 @@ def _center(text, width=WIDTH):
 
 
 def _bar(value, lower, upper, width=BAR_WIDTH):
-    """Where the joint sits inside its soft limits."""
+    """生成关节在软限位范围内的位置条。"""
     span = max(1e-6, upper - lower)
     slot = int(round((value - lower) / span * (width - 1)))
     slot = max(0, min(width - 1, slot))
@@ -44,7 +44,7 @@ def _rule():
 
 
 def render(state):
-    """Build the dashboard from the snapshot dict assembled by the node."""
+    """根据节点组装的状态快照生成仪表盘文本。"""
     headroom = limit_headroom(state["command"], state["lower"], state["upper"])
     roll, pitch, yaw = (math.degrees(value) for value in state["inputs"][:3])
     vertical, horizontal, buttons = state["inputs"][3:6]
@@ -71,6 +71,6 @@ def render(state):
 
 
 def print_dashboard(state):
-    # No ANSI clear/home sequences: ros2 launch prefixes each completed line and
-    # an escape before the first line would shift the box.
+    # 不使用 ANSI 清屏或归位序列：ros2 launch 会为每个完成行加前缀，
+    # 若在首行之前插入转义序列会破坏边框位置。
     print(render(state), flush=True)
