@@ -2,13 +2,13 @@
 
 ## 项目简介
 
-面向 **reBot B601-RS 六轴机械臂**的游戏手柄遥操作方案。通过手柄实现多种可靠的机械臂控制方式，同时采集操作数据，为动作复现、技能学习与遥操优化提供数据支撑。主要功能包括：
+面向 **reBot B601-RS 六轴机械臂**的 Joy-Con 遥操作方案。项目提供末端笛卡尔空间与关节空间两种控制方式，并记录操作数据，为动作复现、技能学习与遥操优化提供数据支撑。主要功能包括：
 
 - Gazebo Harmonic 仿真环境与 ROS–Gazebo 话题桥接；
-- Joy-Con 控制机械臂末端位姿和夹爪；
-- 基于 URDF 运动学和数值 IK 的关节位置控制；
+- **末端遥操**：Joy-Con 控制末端相对位姿和夹爪，经 URDF 运动学与数值 IK 输出关节位置命令；
+- **关节遥操**：Joy-Con 的 IMU、摇杆和按键直接同时控制六个关节，无需 IK；
 - 工作空间、关节限位、速度限制、输入超时和 IK 失败保护；
-- 关节接口测试。
+- 终端状态面板、CSV 遥操数据日志与关节接口自检。
 
 <p align="center">
   <img src="assets/view.png" alt="reBot B601-RS" width="720">
@@ -46,17 +46,40 @@ ros2 launch joyrebot_gazebo_sim sim.launch.py
 ros2 launch joyrebot_gazebo_sim sim.launch.py gui:=false
 ```
 
-### 3. 启动手柄遥操
+### 3. 手柄遥操
 
-另开一个终端，加载 ROS 环境和工作区后运行：
+#### 自检测试
+
 
 ```bash
+ros2 run joyrebot_gazebo_sim joint_self_check
+```
+
+#### 末端遥操（IK）
+
+```bash
+# Joy-Con 控制末端位姿；请勿与关节遥操同时启动
+source /opt/ros/humble/setup.bash
+source install/setup.bash
 ros2 launch joyrebot_teleop teleop.launch.py
 ```
 
-遥操作会读取 `/joint_states`，并发布 `/rebot/joint1/cmd_pos` 至 `/rebot/joint6/cmd_pos` 以及 `/rebot/gripper/cmd_pos`。关节单位为 rad，夹爪单位为 m。
+#### 关节遥操
+
+```bash
+# Joy-Con 直接控制关节；请勿与 IK 遥操同时启动
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch joyrebot_joint_teleop joint_teleop.launch.py
+```
+
+两种模式均发布 `/rebot/joint1/cmd_pos` 至 `/rebot/joint6/cmd_pos` 和 `/rebot/gripper/cmd_pos`；关节单位为 rad，夹爪单位为 m。首次使用时请先在仿真中以小幅动作检查方向和限位。
 
 ## Joy-Con 操作
+
+右手柄优先；未连接右手柄时可使用左手柄。启动时请将 Joy-Con 水平静置约两秒完成 IMU 标定。两种模式的按键含义不同，请按所启动的模式操作。
+
+### 末端遥操（笛卡尔空间 / IK）
 
 | 操作 | 功能 |
 | --- | --- |
@@ -65,34 +88,24 @@ ros2 launch joyrebot_teleop teleop.launch.py
 | 按下摇杆 | 控制末端下降 |
 | `R` / `L` | 控制末端上升 |
 | `ZR` / `ZL` | 切换夹爪开关状态 |
-| `+` | 重新标定手柄 |
-| `Home` | 平滑返回启动时的关节位置（左手柄使用 `Capture`） |
+| `+`（右）/ `-`（左） | 重新标定手柄 |
+| `Home`（右）/ `Capture`（左） | 平滑返回启动时的关节位置 |
 
-右手柄优先；未连接右手柄时可使用左手柄。遥操在关节反馈和手柄输入就绪后自动持续接合。启动时请将 Joy-Con 水平静置约两秒完成标定。
 
-首次使用时请先在仿真中以小幅动作检查方向和限位。遥操作参数可在 [`src/joyrebot_teleop/config/teleop.yaml`](src/joyrebot_teleop/config/teleop.yaml) 中调整。
+### 关节遥操（关节空间）
 
-## 手动关节控制
+| 操作 | 功能 |
+| --- | --- |
+| 手柄 `roll` | 一对一控制 `joint6` 末端旋转 |
+| 手柄 `pitch` | 一对一控制 `joint4` 腕俯仰 |
+| 手柄 `yaw` | 速度控制 `joint1` 底座回转 |
+| 摇杆前后 | 速度控制 `joint2` 大臂 |
+| 摇杆左右 | 速度控制 `joint5` 腕滚转 |
+| `R` / `L` 与摇杆按下 | 分别正向/反向速度控制 `joint3` 小臂 |
+| `ZR` / `ZL` | 切换夹爪开关状态 |
+| `B`（右）/ `↓`（左，按住） | 离合：冻结关节，松开后重新锚定 |
+| `X`（右）/ `↑`（左） | 以当前手腕姿态重新锚定 |
+| `Home`（右）/ `Capture`（左） | 平滑返回 Home 位姿 |
+| `+`（右）/ `-`（左） | 重新标定 IMU |
 
-仿真启动后，也可直接通过 ROS 2 话题发送关节命令：
 
-```bash
-# 控制关节（单位：rad）
-ros2 topic pub --once /rebot/joint1/cmd_pos std_msgs/msg/Float64 '{data: 0.5}'
-
-# 控制夹爪（单位：m，范围 0 ~ 0.05）
-ros2 topic pub --once /rebot/gripper/cmd_pos std_msgs/msg/Float64 '{data: 0.03}'
-```
-
-## 测试
-
-```bash
-colcon test --packages-select joyrebot_gazebo_sim joyrebot_teleop
-colcon test-result --verbose
-```
-
-仿真运行后，可检查关节和夹爪响应：
-
-```bash
-ros2 run joyrebot_gazebo_sim test_joints
-```
