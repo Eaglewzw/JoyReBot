@@ -13,6 +13,7 @@ setup(
         ("share/" + package_name + "/launch", ["launch/teleop.launch.py"]),
     ],
     install_requires=["setuptools", "numpy", "scipy", "hidapi", "PyGLM"],
+    extras_require={"placo": ["placo"]},  # optional QP IK backend (ik_solver: placo)
     zip_safe=True,
     entry_points={"console_scripts": [
         "joycon_input = joyrebot_teleop.joycon_input_node:main",

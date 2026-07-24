@@ -31,6 +31,7 @@ class TeleopController(Node):
             "home_joint_positions": [0.0, 0.3, 0.3, 0.0, 0.0, 0.0],
             "move_home_on_startup": True,
             "gripper_open": 0.05, "gripper_closed": 0.0,
+            "ik_solver": "dls",
             "ik_damping": 0.06, "ik_max_iterations": 120,
             "ik_position_tolerance": 0.004, "ik_orientation_tolerance": 0.015,
             "data_logging": True, "data_log_directory": "teleop_logs",
@@ -39,7 +40,15 @@ class TeleopController(Node):
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         urdf = Path(get_package_share_directory("joyrebot_teleop")) / "config/rebot_b601_kinematics.urdf"
-        self.chain = SerialChain.from_urdf(urdf)
+        solver_kind = str(self.get_parameter("ik_solver").value).lower()
+        if solver_kind == "placo":
+            from .placo_solver import PlacoChain
+            self.chain = PlacoChain(
+                urdf, dt=1.0 / float(self.get_parameter("control_rate").value))
+            self.get_logger().info("IK solver: PlaCo (QP)")
+        else:
+            self.chain = SerialChain.from_urdf(urdf)
+            self.get_logger().info("IK solver: damped least squares (DLS)")
         margin = float(self.get_parameter("joint_margin").value)
         self.chain.lower += margin
         self.chain.upper -= margin

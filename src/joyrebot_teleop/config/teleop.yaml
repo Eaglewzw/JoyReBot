@@ -18,15 +18,20 @@ teleop_controller:
     orientation_axis_map: [0, 1, 2]
     orientation_axis_sign: [-1.0, -1.0, 1.0]
     # Relative Roll/Pitch/Yaw rotation-vector limits (rad): about 69/11.5/43 deg.
-    orientation_limit: [1.20, 0.75, 0.75]
+    # orientation_limit: [1.20, 0.75, 0.75]
+    orientation_limit: [2.09, 0.23, 0.86]   # roll ±120° / pitch ±13° / yaw ±49°
     workspace_min: [-0.55, -0.55, -0.05]
-    workspace_max: [0.55, 0.55, 0.70]
+    workspace_max: [0.70, 0.55, 0.70]
     joint_margin: 0.02
     home_joint_positions: [0.0, 0.3, 0.3, 0.0, 0.0, 0.0]
     move_home_on_startup: true
     max_joint_speed: 0.7
     gripper_open: 0.05
     gripper_closed: 0.0
+    # IK backend: "dls" (built-in damped least squares) or "placo" (QP solver;
+    # needs `pip install placo`). PlaCo treats joint/velocity limits as hard
+    # constraints and degrades gracefully instead of freezing at a joint limit.
+    ik_solver: placo
     ik_damping: 0.06
     ik_max_iterations: 120
     ik_position_tolerance: 0.004
